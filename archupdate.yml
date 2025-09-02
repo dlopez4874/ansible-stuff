@@ -1,0 +1,33 @@
+---
+- name: update with pacman first
+  hosts: arch
+  ignore_errors: true
+  tasks: 
+  - name: run pacman
+    community.general.pacman:
+      update_cache: true
+      upgrade: true
+      state: latest
+    register: pacman_results
+  - name: print pacman results with debug command if changes were made
+    debug:
+      var: pacman_results
+    when: pacman_results.changed or pacman_results.failed
+    changed_when: true
+
+- name: update AUR packages with yay
+  hosts: arch
+  become_user: daniel
+  ignore_errors: true
+  tasks:
+  - name: run yay
+    kewlfft.aur.aur:
+      upgrade: true
+      use: yay
+      state: latest
+    register: yay_results
+  - name: print yay results with debug command if changes were made
+    debug:
+      var: yay_results
+    when: yay_results.changed or yay_results.failed
+    changed_when: true
