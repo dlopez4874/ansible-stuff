@@ -1,0 +1,89 @@
+---
+- name: Prepare kernel/sysctl & tools (server + agents)
+  hosts: arch
+  become: true
+  tasks:
+    - name: Ensure needed packages
+      ansible.builtin.package:
+        name:
+          - curl
+        state: present
+
+    - name: Enable bridge nf iptables (kube networking)
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+      notify: sysctl-reload
+
+    - name: Load br_netfilter at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: "br_netfilter\n"
+
+    - name: Modprobe br_netfilter now
+      ansible.builtin.modprobe:
+        name: br_netfilter
+        state: present
+
+  handlers:
+    - name: sysctl-reload
+      ansible.builtin.command: sysctl --system
+
+- name: Install k3s server (control plane)
+  hosts: k3s_server
+  become: true
+  tasks:
+    - name: Create k3s config dir
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: "0755"
+
+    - name: Write k3s server config
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/config.yaml
+        mode: "0644"
+        content: |
+          token: "{{ k3s_token }}"
+          cluster-cidr: "{{ k3s_cluster_cidr }}"
+          service-cidr: "{{ k3s_service_cidr }}"
+          cluster-dns: "{{ k3s_cluster_dns }}"
+          write-kubeconfig-mode: "0644"
+          # Uncomment to disable built-ins (e.g. traefik) and install your own later
+          # disable:
+          # {% for c in k3s_disable_components %}- {{ c }}
+          # {% endfor %}
+
+    - name: Install/upgrade k3s server
+      ansible.builtin.shell: |
+        curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={{ k3s_version | default('') }} sh -s - server
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Wait for node to be Ready
+      ansible.builtin.shell: "k3s kubectl get nodes --no-headers | grep -q ' Ready '"
+      register: ready_check
+      retries: 30
+      delay: 5
+      until: ready_check.rc == 0
+
+- name: Install k3s agents (workers)
+  hosts: k3s_agents
+  become: true
+  vars:
+    k3s_server_ip: "{{ hostvars[groups['k3s_server'][0]].ansible_host | default(groups['k3s_server'][0]) }}"
+  tasks:
+    - name: Install/upgrade k3s agent
+      ansible.builtin.shell: |
+        curl -sfL https://get.k3s.io | \
+          K3S_URL=https://{{ k3s_server_ip }}:6443 \
+          K3S_TOKEN='{{ k3s_token }}' \
+          INSTALL_K3S_VERSION={{ k3s_version | default('') }} \
+          sh -s - agent
+      args:
+        creates: /usr/local/bin/k3s-agent
+
+
