@@ -1,0 +1,64 @@
+---
+- name: Create an Ingress for nginx via Traefik
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    k8s_namespace: web
+    ingress_name: web-nginx
+    ingress_host: nginx.localtest.me
+    service_name: nginx
+    service_port: 80
+
+  tasks:
+    - name: Ensure namespace exists
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"   # comes from host_vars/localhost.yml
+        state: present
+        kind: Namespace
+        name: "{{ k8s_namespace }}"
+
+    - name: Wait for Traefik to be available
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: apps/v1
+        kind: Deployment
+        namespace: kube-system
+        name: traefik
+      register: traefik_dep
+      until: (traefik_dep.resources | length) > 0 and
+             ((traefik_dep.resources[0].status.availableReplicas | default(0)) | int) > 0
+      retries: 20
+      delay: 6
+
+    - name: Create/Update Ingress
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: "{{ ingress_name }}"
+            namespace: "{{ k8s_namespace }}"
+            annotations:
+              kubernetes.io/ingress.class: traefik
+          spec:
+            ingressClassName: traefik
+            rules:
+              - host: "{{ ingress_host }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: "{{ service_name }}"
+                          port:
+                            number: "{{ service_port }}"
+
+    - name: Show test command
+      debug:
+        msg:
+          - "curl -I --resolve {{ ingress_host }}:80:<NODE_IP> http://{{ ingress_host }}/"
+
