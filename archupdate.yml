@@ -31,3 +31,10 @@
       var: yay_results
     when: yay_results.changed or yay_results.failed
     changed_when: true
+  - name: print date
+    shell: date
+    changed_when: false
+    register: date_output
+  - name: debug date variable
+    debug:
+      var: date_output.stdout
