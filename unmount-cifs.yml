@@ -1,0 +1,14 @@
+# umount-cifs.yml
+- hosts: archnode001
+  become: yes
+  tasks:
+    - name: Unmount if mounted
+      command: /usr/bin/umount /mnt/REDACTED-SHARE
+      register: um
+      failed_when: um.rc not in [0,32]     # rc=32: not mounted
+      changed_when: um.rc == 0
+
+    - name: Show mount status
+      command: /usr/bin/findmnt -T /mnt/REDACTED-SHARE || true
+      changed_when: false
+
