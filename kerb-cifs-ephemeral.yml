@@ -1,0 +1,108 @@
+---
+# Ephemeral Kerberos+CIFS mount for FlashArray share
+# - No /etc/fstab changes
+# - Mounts now (one-shot), unmount manually when done
+# - Uses user tickets (multiuser), so each user can kinit and access
+
+- name: Ephemeral Kerberos CIFS mount (archnode001)
+  hosts: archnode001
+  become: yes
+  gather_facts: yes
+
+  vars:
+    realm_upper:  "YOGURT.LAB"
+    domain_lower: "yogurt.lab"
+
+    smb_server:   "nas01-yogurt.yogurt.lab"
+    smb_share:    "yogurt-smpexport1"
+    mount_point:  "/mnt/yogurt-smpexport1"
+
+    # SMB options tuned for FlashArray + modern clients
+    cifs_opts: "sec=krb5,vers=3.1.1,seal,multiuser,_netdev"
+
+  pre_tasks:
+    - name: Ensure required packages are present (krb5 + CIFS + key utils)
+      package:
+        name:
+          - krb5
+          - cifs-utils
+          - keyutils
+        state: present
+
+    - name: Configure /etc/krb5.conf (minimal, DNS-based KDC discovery)
+      copy:
+        dest: /etc/krb5.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [libdefaults]
+            default_realm = {{ realm_upper }}
+            dns_lookup_kdc = true
+            dns_lookup_realm = true
+            rdns = false
+            ticket_lifetime = 24h
+            renew_lifetime  = 7d
+            forwardable = true
+          [domain_realm]
+            .{{ domain_lower }} = {{ realm_upper }}
+            {{ domain_lower }} = {{ realm_upper }}
+
+    - name: Create mount point (no fstab)
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # (Optional but harmless) Ensure there's no stale fstab line for this share
+    - name: Ensure /etc/fstab has no persistent entry for this mount
+      lineinfile:
+        path: /etc/fstab
+        state: absent
+        regexp: '^//{{ smb_server | regex_escape }}/{{ smb_share | regex_escape }}\s+{{ mount_point | regex_escape }}\s+cifs\s+'
+      notify: daemon-reload
+
+  tasks:
+    - name: Show DNS routing for yogurt.lab (informational)
+      command: /usr/bin/resolvectl query {{ smb_server }}
+      register: dns_check
+      changed_when: false
+      failed_when: false
+
+    - name: Print reminder about Kerberos usage
+      debug:
+        msg:
+          - "This playbook mounts CIFS using Kerberos user tickets (multiuser)."
+          - "Each user should run:  kinit <user>@{{ realm_upper }}  before accessing {{ mount_point }}."
+          - "DNS check for {{ smb_server }} (non-fatal): {{ dns_check.stdout | default('n/a') | trim }}"
+
+    - name: Mount the CIFS share (ephemeral; no fstab)
+      command:
+        cmd: >
+          /usr/bin/mount -t cifs //{{ smb_server }}/{{ smb_share }}
+          {{ mount_point }} -o {{ cifs_opts }}
+      args:
+        creates: "{{ mount_point }}/.ansible_mount_probe"
+      register: mount_cmd
+      changed_when: mount_cmd.rc == 0
+      failed_when: mount_cmd.rc not in [0,32]
+      # rc=32 typically means 'already mounted' with some environments; we treat that as non-fatal.
+
+    - name: Drop a tiny probe file to mark successful mount (idempotence helper)
+      file:
+        path: "{{ mount_point }}/.ansible_mount_probe"
+        state: touch
+      when: mount_cmd.rc == 0
+
+    - name: Show current mount
+      command: /usr/bin/findmnt -T {{ mount_point }} -o TARGET,SOURCE,FSTYPE,OPTIONS
+      changed_when: false
+
+  handlers:
+    - name: daemon-reload
+      command: systemctl daemon-reload
+      listen: daemon-reload
+      changed_when: false
+

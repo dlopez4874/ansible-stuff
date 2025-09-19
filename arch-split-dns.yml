@@ -1,0 +1,65 @@
+---
+# Configure split DNS at runtime (non-persistent) on Arch
+# Routes only *.yogurt.lab to 10.235.169.118 and leaves DHCP DNS for everything else.
+- name: Ephemeral split-DNS for yogurt.lab (systemd-resolved)
+  hosts: arch
+  become: yes
+  gather_facts: yes
+
+  vars:
+    yogurt_domain: "yogurt.lab"
+    yogurt_dns: "10.235.169.118"
+
+  # Prefer the interface Ansible already knows about.
+  # If your facts don't contain this (rare), pass -e yogurt_iface=enp1s0
+  vars_prompt: []
+  vars_files: []
+  pre_tasks:
+    - name: Pick default interface from facts (override with -e yogurt_iface=IFACE if needed)
+      set_fact:
+        yogurt_iface: "{{ yogurt_iface | default(ansible_default_ipv4.interface, true) }}"
+
+    - name: Ensure systemd-resolved is running and enabled
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: started
+        enabled: true
+
+    - name: Point /etc/resolv.conf at systemd-resolved stub (127.0.0.53)
+      ansible.builtin.file:
+        src: /run/systemd/resolve/stub-resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: true
+
+  tasks:
+    - name: Route *.yogurt.lab to the AD DNS (runtime only)
+      ansible.builtin.command:
+        cmd: "/usr/bin/resolvectl domain {{ yogurt_iface }} ~{{ yogurt_domain }}"
+      changed_when: true
+
+    - name: Set DNS server for that interface (runtime only)
+      ansible.builtin.command:
+        cmd: "/usr/bin/resolvectl dns {{ yogurt_iface }} {{ yogurt_dns }}"
+      changed_when: true
+
+    - name: Flush resolver cache
+      ansible.builtin.command:
+        cmd: "/usr/bin/resolvectl flush-caches"
+      changed_when: false
+
+    - name: Show current per-link DNS (for visibility)
+      ansible.builtin.command:
+        cmd: "/usr/bin/resolvectl status {{ yogurt_iface }}"
+      changed_when: false
+      register: resolvectl_status
+
+    - name: Print summary
+      ansible.builtin.debug:
+        msg:
+          - "Interface: {{ yogurt_iface }}"
+          - "Routing domain set: ~{{ yogurt_domain }}"
+          - "DNS for {{ yogurt_domain }} -> {{ yogurt_dns }}"
+          - "Reminder: this is runtime-only and will not survive a reboot."
+
+
