@@ -25,6 +25,7 @@
       upgrade: true
       use: yay
       state: latest
+      aur_only: true
     register: yay_results
   - name: print yay results with debug command if changes were made
     debug:
@@ -38,3 +39,15 @@
   - name: debug date variable
     debug:
       var: date_output.stdout
+
+  - name: Packages upgraded in last 6h (store to var)
+    ansible.builtin.shell: |
+      paclog --after "$(date -Iminutes --date '6 hours ago')" | paclog --action=upgrade
+    args:
+      executable: /bin/bash
+    register: upgraded_names
+    changed_when: false
+    failed_when: false
+  - name: Show upgraded package names
+    ansible.builtin.debug:
+      var: upgraded_names.stdout_lines
