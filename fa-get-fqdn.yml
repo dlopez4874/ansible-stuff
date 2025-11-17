@@ -1,0 +1,12 @@
+# fa-get-fqdn.yml
+- hosts: localhost
+  become: yes
+  tasks:
+    - name: Gather info from FlashArray
+      purestorage.flasharray.purefa_info:
+        fa_url: slc-304-fa04.cxlab.purestorage.com
+        api_token: "{{ lookup('env', 'PURE_API_TOKEN') }}" 
+      register: array_info
+
+    - debug:
+        msg: "{{ array_info.purefa_info }}"
