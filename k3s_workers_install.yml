@@ -1,0 +1,151 @@
+---
+- name: Enforce K3s agent on workers and align runtime
+  hosts: k3s_agents
+  become: true
+  gather_facts: false
+
+  vars:
+    # ===== Required inputs =====
+    k3s_server_url: "https://10.235.169.108:6443"
+    k3s_token: "REPLACE_WITH_YOUR_NODE_TOKEN"
+    k3s_version: "v1.33.5+k3s1"          # desired K3s version
+    node_labels:
+      - "role=worker"
+
+    # ===== Optional =====
+    k3s_config_path: "/etc/rancher/k3s/config.yaml"
+    k3s_get_script: "/tmp/get-k3s.sh"
+
+  pre_tasks:
+    - name: Ensure curl and bash are present
+      ansible.builtin.package:
+        name:
+          - curl
+          - bash
+        state: present
+
+  tasks:
+    - name: Stop and disable any K3s units (server/agent)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - k3s
+        - k3s-agent
+      failed_when: false
+
+    - name: Check if k3s-killall.sh exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s-killall.sh
+      register: killall_stat
+
+    - name: Run k3s-killall (cleans leftover processes/sockets)
+      ansible.builtin.command: /usr/local/bin/k3s-killall.sh
+      when: killall_stat.stat.exists
+      register: killall_out
+      changed_when: true
+      failed_when: false
+
+    - name: Remove stray systemd units (server/agent)
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - k3s.service
+        - k3s.service.env
+        - k3s-agent.service
+        - k3s-agent.service.env
+
+    - name: systemd daemon-reload
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Ensure K3s config directory exists
+      ansible.builtin.file:
+        path: "/etc/rancher/k3s"
+        state: directory
+        mode: "0755"
+
+    - name: Write /etc/rancher/k3s/config.yaml with server & token
+      ansible.builtin.copy:
+        dest: "{{ k3s_config_path }}"
+        mode: "0600"
+        content: |
+          server: {{ k3s_server_url }}
+          token: {{ k3s_token }}
+          {% if node_labels|length > 0 %}
+          node-label:
+          {% for lbl in node_labels %}
+            - {{ lbl }}
+          {% endfor %}
+          {% endif %}
+      notify: Restart k3s-agent
+
+    - name: Download official K3s install script (idempotent)
+      ansible.builtin.get_url:
+        url: "https://get.k3s.io"
+        dest: "{{ k3s_get_script }}"
+        mode: "0755"
+
+    - name: Check currently installed K3s version (if any)
+      ansible.builtin.shell: "k3s --version | head -n1 | awk '{print $3}'"
+      register: installed_version
+      changed_when: false
+      failed_when: false
+
+    - name: Install/upgrade K3s agent to {{ k3s_version }}
+      ansible.builtin.shell: "{{ k3s_get_script }} agent"
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+      register: install_out
+      changed_when: >
+        installed_version.stdout is not match(k3s_version)
+        or ('Created symlink' in (install_out.stdout | default('')))
+        or ('Creating service file' in (install_out.stdout | default('')))
+
+    - name: Enable and start k3s-agent
+      ansible.builtin.systemd:
+        name: k3s-agent
+        enabled: true
+        state: started
+
+    # ===== Verification (nice-to-have) =====
+    - name: Wait for k3s-agent to settle
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Show k3s version
+      ansible.builtin.shell: "k3s --version"
+      register: k3s_ver
+      changed_when: false
+      failed_when: false
+
+    - name: Find newest embedded containerd path
+      ansible.builtin.shell: |
+        set -euo pipefail
+        find /var/lib/rancher/k3s/data/ -type f -name containerd -printf "%T@ %p\n" 2>/dev/null \
+        | sort -n | tail -1 | awk '{print $2}'
+      register: containerd_path
+      changed_when: false
+      failed_when: false
+
+    - name: Show embedded containerd version (if found)
+      ansible.builtin.shell: "{{ containerd_path.stdout }} --version"
+      when: containerd_path.stdout | length > 0
+      register: containerd_ver
+      changed_when: false
+      failed_when: false
+
+    - name: Print summary
+      ansible.builtin.debug:
+        msg:
+          - "k3s: {{ k3s_ver.stdout | default('n/a') }}"
+          - "containerd: {{ containerd_ver.stdout | default('n/a (path not found)') }}"
+
+  handlers:
+    - name: Restart k3s-agent
+      ansible.builtin.systemd:
+        name: k3s-agent
+        state: restarted
+
