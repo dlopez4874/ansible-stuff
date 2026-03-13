@@ -1,10 +1,12 @@
 # fa-get-fqdn.yml
+# export PURE_API_TOKEN=0513fc2c-adcb-d10d-77eb-8f7f7cb45986
+# export ARRAY_NAME=slc-304-fa04.cxlab.purestorage.com
 - hosts: localhost
   become: yes
   tasks:
     - name: Gather info from FlashArray
       purestorage.flasharray.purefa_info:
-        fa_url: slc-304-fa04.cxlab.purestorage.com
+        fa_url: "{{ lookup('env', 'ARRAY_NAME') }}"
         api_token: "{{ lookup('env', 'PURE_API_TOKEN') }}" 
       register: array_info
 

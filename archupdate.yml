@@ -51,3 +51,34 @@
   - name: Show upgraded package names
     ansible.builtin.debug:
       var: upgraded_names.stdout_lines
+
+- name: Prune pacman package cache (keep 2 versions)
+  hosts: arch
+  become: true
+  tasks:
+    - name: Ensure pacman-contrib is installed (provides paccache)
+      community.general.pacman:
+        name: pacman-contrib
+        state: present
+
+    - name: Prune cache for installed packages (keep 2)
+      ansible.builtin.command: paccache -r -k 2 -v --nocolor
+      register: paccache_keep2
+      changed_when: "'.pkg.tar' in (paccache_keep2.stdout + paccache_keep2.stderr)"
+
+    - name: Show pruned cache entries (keep 2)
+      ansible.builtin.debug:
+        msg: "{{ paccache_keep2.stdout_lines + paccache_keep2.stderr_lines }}"
+      when: paccache_keep2.changed
+      changed_when: false
+
+    - name: Prune cache for uninstalled packages (keep 0)
+      ansible.builtin.command: paccache -r -u -k 0 -v --nocolor
+      register: paccache_uninst
+      changed_when: "'.pkg.tar' in (paccache_uninst.stdout + paccache_uninst.stderr)"
+
+    - name: Show pruned cache entries (uninstalled)
+      ansible.builtin.debug:
+        msg: "{{ paccache_uninst.stdout_lines + paccache_uninst.stderr_lines }}"
+      when: paccache_uninst.changed
+      changed_when: false
