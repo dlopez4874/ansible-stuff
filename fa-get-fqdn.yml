@@ -1,10 +1,12 @@
 # fa-get-fqdn.yml
+# export PURE_API_TOKEN=REDACTED-ROTATED-TOKEN
+# export ARRAY_NAME=REDACTED-ARRAY-FQDN
 - hosts: localhost
   become: yes
   tasks:
     - name: Gather info from FlashArray
       purestorage.flasharray.purefa_info:
-        fa_url: REDACTED-ARRAY-FQDN
+        fa_url: "{{ lookup('env', 'ARRAY_NAME') }}"
         api_token: "{{ lookup('env', 'PURE_API_TOKEN') }}" 
       register: array_info
 
