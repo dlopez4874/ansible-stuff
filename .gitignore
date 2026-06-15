@@ -4,3 +4,4 @@
 *.log
 *.bak
 .DS_Store
+aur_audit_results/

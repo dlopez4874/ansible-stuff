@@ -1,0 +1,12 @@
+[arch]
+archnode001
+archnode002
+archnode003
+
+
+[k3s_server]
+archnode001
+
+[k3s_agents]
+archnode002
+archnode003

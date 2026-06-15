@@ -1,0 +1,4 @@
+python3 -m venv ~/ansible-venv
+source ~/ansible-venv/bin/activate
+pip install ansible py-pure-client
+### set token var ### export PURE_API_TOKEN=0513fc2c-adcb-d10d-77eb-8f7f7cb45986

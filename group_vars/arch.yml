@@ -1,0 +1,8 @@
+# _version: "v1.29.5+k3s1"         # pick a stable k3s version; can omit to get latest
+k3s_token: "{{ lookup('password', inventory_dir + '/.k3s_token chars=ascii_letters,digits length=32') }}"
+k3s_cluster_cidr: "10.235.168.0/22"
+k3s_service_cidr: "10.235.168.0/22"
+k3s_cluster_dns: "10.235.116.17"
+k3s_disable_components: []          # e.g. ["traefik"] if you plan to install your own ingress
+kubeconfig: "/home/daniel/.kube/config"
+
