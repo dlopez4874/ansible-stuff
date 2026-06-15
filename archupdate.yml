@@ -1,76 +1,111 @@
 ---
-- name: update with pacman first
-  hosts: arch
-  ignore_errors: true
-  tasks: 
-  - name: run pacman
-    community.general.pacman:
-      update_cache: true
-      upgrade: true
-      state: latest
-    register: pacman_results
-  - name: print pacman results with debug command if changes were made
-    debug:
-      var: pacman_results
-    when: pacman_results.changed or pacman_results.failed
-    changed_when: true
+# archupdate.yml — System Upgrade Playbook
+#
+# Play 1: pacman full upgrade (official repos)
+# Play 2: yay AUR upgrade (AUR packages only)
+# Play 3: pacman package cache prune (paccache -rk2)
+#
+# Usage:
+#   playbook archupdate.yml
+#
+# Note: After a kernel upgrade, run k3s_rolling_reboot.yml to gracefully
+#       drain and reboot each node. Do not use 'adhoc arch -m reboot'
+#       on a live cluster — it will evict pods without draining first.
 
-- name: update AUR packages with yay
+- name: Update with pacman first
+  hosts: arch
+  become: true
+  ignore_errors: true
+
+  tasks:
+
+    - name: Run pacman full upgrade
+      community.general.pacman:
+        update_cache: true
+        upgrade: true
+        state: latest
+      register: pacman_results
+
+    - name: Show pacman results (if changed or failed)
+      debug:
+        var: pacman_results
+      when: pacman_results.changed or pacman_results.failed
+
+
+- name: Update AUR packages with yay
   hosts: arch
   become_user: daniel
   ignore_errors: true
-  tasks:
-  - name: run yay
-    kewlfft.aur.aur:
-      upgrade: true
-      use: yay
-      state: latest
-      aur_only: true
-    register: yay_results
-  - name: print yay results with debug command if changes were made
-    debug:
-      var: yay_results
-    when: yay_results.changed or yay_results.failed
-    changed_when: true
-  - name: print date
-    shell: date
-    changed_when: false
-    register: date_output
-  - name: debug date variable
-    debug:
-      var: date_output.stdout
 
-  - name: Packages upgraded in last 6h (store to var)
-    ansible.builtin.shell: |
-      paclog --after "$(date -Iminutes --date '6 hours ago')" | paclog --action=upgrade
-    args:
-      executable: /bin/bash
-    register: upgraded_names
-    changed_when: false
-    failed_when: false
-  - name: Show upgraded package names
-    ansible.builtin.debug:
-      var: upgraded_names.stdout_lines
+  tasks:
+
+    - name: Check for pending AUR updates (dry run)
+      shell: yay -Qua
+      register: yay_pending
+      changed_when: false
+      failed_when: false
+
+    - name: Show pending AUR updates
+      debug:
+        msg: "{{ yay_pending.stdout_lines if yay_pending.stdout_lines else ['No AUR updates pending'] }}"
+
+    - name: Run yay AUR upgrade
+      kewlfft.aur.aur:
+        upgrade: true
+        use: yay
+        state: latest
+        aur_only: true
+      register: yay_results
+      when: yay_pending.stdout != ""
+
+    - name: Show yay results (if changed or failed)
+      debug:
+        var: yay_results
+      when: yay_results is not skipped and (yay_results.changed or yay_results.failed)
+
+    - name: Get current date/time
+      shell: date
+      changed_when: false
+      register: date_output
+
+    - name: Show current date/time
+      debug:
+        var: date_output.stdout
+
+    - name: Packages upgraded in last 6h
+      ansible.builtin.shell: |
+        paclog --after "$(date -Iminutes --date '6 hours ago')" | paclog --action=upgrade
+      args:
+        executable: /bin/bash
+      register: upgraded_names
+      changed_when: false
+      failed_when: false
+
+    - name: Show upgraded package names
+      ansible.builtin.debug:
+        var: upgraded_names.stdout_lines
+
 
 - name: Prune pacman package cache (keep 2 versions)
   hosts: arch
   become: true
+
   tasks:
+
     - name: Ensure pacman-contrib is installed (provides paccache)
       community.general.pacman:
         name: pacman-contrib
         state: present
 
-    - name: Prune cache for installed packages (keep 2)
+    - name: Prune cache for installed packages (keep 2 versions)
       ansible.builtin.command: paccache -r -k 2 -v --nocolor
       register: paccache_keep2
       changed_when: "'.pkg.tar' in (paccache_keep2.stdout + paccache_keep2.stderr)"
 
-    - name: Show pruned cache entries (keep 2)
+    - name: Show pruned cache entries (installed, keep 2)
       ansible.builtin.debug:
         msg: "{{ paccache_keep2.stdout_lines + paccache_keep2.stderr_lines }}"
       when: paccache_keep2.changed
-      changed_when: false
 
     - name: Prune cache for uninstalled packages (keep 0)
       ansible.builtin.command: paccache -r -u -k 0 -v --nocolor
@@ -81,4 +116,4 @@
       ansible.builtin.debug:
         msg: "{{ paccache_uninst.stdout_lines + paccache_uninst.stderr_lines }}"
       when: paccache_uninst.changed
-      changed_when: false
+
