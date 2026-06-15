@@ -26,7 +26,7 @@
       when: inventory_hostname == k3s_control_plane
 
     - name: Drain node
-      shell: "{{ kubectl }} drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --timeout=90s"
+      shell: "{{ kubectl }} drain {{ ansible_fqdn }} --ignore-daemonsets --delete-emptydir-data --timeout=90s"
       delegate_to: "{{ k3s_control_plane }}"
 
     - name: Reboot node
@@ -34,7 +34,7 @@
         reboot_timeout: 300
 
     - name: Wait for node to be Ready
-      shell: "{{ kubectl }} wait node/{{ inventory_hostname }} --for=condition=Ready --timeout=120s"
+      shell: "{{ kubectl }} wait node/{{ ansible_fqdn }} --for=condition=Ready --timeout=120s"
       delegate_to: "{{ k3s_control_plane }}"
       register: node_ready
       until: node_ready.rc == 0
@@ -43,7 +43,7 @@
       changed_when: false
 
     - name: Uncordon node
-      shell: "{{ kubectl }} uncordon {{ inventory_hostname }}"
+      shell: "{{ kubectl }} uncordon {{ ansible_fqdn }}"
       delegate_to: "{{ k3s_control_plane }}"
 
 
@@ -61,7 +61,7 @@
       when: inventory_hostname != k3s_control_plane
 
     - name: Drain control plane node
-      shell: "{{ kubectl }} drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data --timeout=90s"
+      shell: "{{ kubectl }} drain {{ ansible_fqdn }} --ignore-daemonsets --delete-emptydir-data --timeout=90s"
 
     - name: Reboot control plane
       reboot:
@@ -76,7 +76,7 @@
       changed_when: false
 
     - name: Wait for control plane node to be Ready
-      shell: "{{ kubectl }} wait node/{{ inventory_hostname }} --for=condition=Ready --timeout=120s"
+      shell: "{{ kubectl }} wait node/{{ ansible_fqdn }} --for=condition=Ready --timeout=120s"
       register: cp_ready
       until: cp_ready.rc == 0
       retries: 6
@@ -84,5 +84,5 @@
       changed_when: false
 
     - name: Uncordon control plane node
-      shell: "{{ kubectl }} uncordon {{ inventory_hostname }}"
+      shell: "{{ kubectl }} uncordon {{ ansible_fqdn }}"
 
