@@ -34,7 +34,7 @@
     community_list_url: "https://raw.githubusercontent.com/lenucksi/aur-malware-check/main/packages.txt"
     # IOC patterns — Wave 1 npm accounts + Wave 2 bun accounts
     ioc_accounts: >-
-      herbsobering|custodiatovar|veramagalhaes|arojas|franziskaweber|
+      herbsobering|custodiatovar|veramagalhaes|franziskaweber|
       tobiaswesterburg|ellenmyklebust|ivonahruskova|simongeisler|zxp19821005
     ioc_npm_pkgs: "atomic-lockfile|js-digest|lockfile-js|ansi-colors"
 
@@ -404,12 +404,23 @@
           echo "[!] Rust ELF64 binary dropped to /tmp, /var/tmp, /run"
           echo ""
           echo "--- /tmp /var/tmp /run ---"
-          find /tmp /var/tmp /run -name "deps" -type f 2>/dev/null \
-            && echo "[!! FOUND — treat as compromised !!]" || echo "[not found]"
+          DEPS_TMP=$(find /tmp /var/tmp /run -name "deps" -type f 2>/dev/null)
+          if [ -n "$DEPS_TMP" ]; then
+            echo "[!! FOUND — treat as compromised !!]"
+            echo "$DEPS_TMP"
+          else
+            echo "[not found]"
+          fi
           echo ""
-          echo "--- /home and /root ---"
-          find /root /home -name "deps" -type f 2>/dev/null \
-            && echo "[!! FOUND — treat as compromised !!]" || echo "[not found]"
+          echo "--- /home and /root (excluding build caches) ---"
+          DEPS_HOME=$(find /root /home -name "deps" -type f \
+            ! -path "*/.cache/yay/*" ! -path "*/.cache/paru/*" 2>/dev/null)
+          if [ -n "$DEPS_HOME" ]; then
+            echo "[!! FOUND — treat as compromised !!]"
+            echo "$DEPS_HOME"
+          else
+            echo "[not found]"
+          fi
         } >> {{ report_path }}
       args:
         executable: /bin/bash
@@ -506,4 +517,3 @@
         path: "{{ report_path }}"
         state: absent
       tags: [audit, fetch]
-
