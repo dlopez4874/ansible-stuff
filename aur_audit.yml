@@ -1,466 +1,509 @@
 ---
 # aur_audit.yml — AUR Malware Audit Playbook
+# Atomic Arch / Sonatype-2026-003775 Campaign
 #
-# Checks Arch Linux nodes for indicators of compromise from the June 2026
-# "Atomic Arch" AUR supply-chain attack (Sonatype-2026-003775, CVSS 8.7).
-#
-# Attack summary:
-#   Attackers adopted orphaned AUR packages and injected PKGBUILDs that ran
-#   npm/bun to pull atomic-lockfile or js-digest, which dropped a Rust-compiled
-#   infostealer ('deps') and an optional eBPF rootkit.
-#
-# References:
-#   https://github.com/lenucksi/aur-malware-check
-#   https://archlinux.org/news/active-aur-malicious-packages-incident/
-#   https://cybersecuritynews.com/arch-linux-aur-packages-compromised/
+# Checks for IOCs from the June 2026 AUR supply-chain attack.
+# Wave 1 (Jun 10–12): atomic-lockfile via npm
+# Wave 2 (Jun 14+):   js-digest/ansi-colors via bun, hex/octal-obfuscated shell
+# Registration freeze: Jun 15 — cleanup still ongoing.
 #
 # Usage:
-#   ansible-playbook aur_audit.yml
-#   ansible-playbook aur_audit.yml -e "critical_date=2026-06-08"  # widen window
-#   ansible-playbook aur_audit.yml --tags fetch                    # re-fetch only
+#   playbook aur_audit.yml
 #
-# Output: ./aur_audit_results/<hostname>.txt on the control node.
+# Tags:
+#   audit  — run all checks
+#   fetch  — only fetch reports back to control node
+#
+# Ref: https://github.com/lenucksi/aur-malware-check
 
 - name: AUR Malware Audit — Atomic Arch Campaign (June 2026)
   hosts: arch
   become: true
   gather_facts: true
-
   vars:
     report_path: "/tmp/aur_audit_{{ inventory_hostname }}.txt"
-    fetch_dest: "./aur_audit_results/"
-    # June 9 gives a small buffer before the June 10–12 active campaign window.
-    # Override with -e "critical_date=2026-06-08" to widen if needed.
+    fetch_dest:  "./aur_audit_results/"
+    # Critical windows — extend as campaign evolves
+    critical_wave1_start: "2026-06-10"
+    critical_wave1_end:   "2026-06-12"
+    critical_wave2_start: "2026-06-13"
+    critical_wave2_end:   "2026-06-14"
+    # Combined window for systemd/filesystem checks
     critical_date: "2026-06-09"
-    # Known-malicious IOC strings — attacker account names and malicious npm packages
-    ioc_pattern: >-
-      atomic-lockfile|js-digest|lockfile-js|
-      herbsobering|custodiatovar|veramagalhaes|
-      franziskaweber|tobiaswesterburg|ellenmyklebust
+    # Community-maintained compromised package list (fetched at runtime)
+    community_list_url: "https://raw.githubusercontent.com/lenucksi/aur-malware-check/main/packages.txt"
+    # IOC patterns — Wave 1 npm accounts + Wave 2 bun accounts
+    ioc_accounts: >-
+      herbsobering|custodiatovar|veramagalhaes|arojas|franziskaweber|
+      tobiaswesterburg|ellenmyklebust|ivonahruskova|simongeisler|zxp19821005
+    ioc_npm_pkgs: "atomic-lockfile|js-digest|lockfile-js|ansi-colors"
 
   tasks:
 
-    # ── Setup ──────────────────────────────────────────────────────────────────
+    # ── Housekeeping ──────────────────────────────────────────────────────────
     - name: Remove any previous report file
       file:
         path: "{{ report_path }}"
         state: absent
-      tags: [always]
+      tags: [audit]
 
     - name: Write report header
-      copy:
-        dest: "{{ report_path }}"
-        content: |
-          ================================================================================
-            AUR Malware Audit — Atomic Arch Campaign (June 2026)
-            Host      : {{ inventory_hostname }}
-            Run Time  : {{ ansible_date_time.iso8601 }}
-            Ref       : Sonatype-2026-003775 / CVSS 8.7
-            IOC Ref   : https://github.com/lenucksi/aur-malware-check
-          ================================================================================
-      tags: [always]
+      shell: |
+        cat >> {{ report_path }} << 'EOF'
+        ================================================================================
+          AUR Malware Audit — Atomic Arch Campaign (June 2026)
+          Wave 1 (Jun 10-12): atomic-lockfile/npm
+          Wave 2 (Jun 14+):   js-digest/bun + obfuscated shell
+          Host     : {{ ansible_fqdn }}
+          Run Time : {{ ansible_date_time.iso8601 }}
+          Kernel   : {{ ansible_kernel }}
+        ================================================================================
+        EOF
+      args:
+        executable: /bin/bash
+      changed_when: true
+      tags: [audit]
 
-    # ── Section 1: AUR packages + install dates ────────────────────────────────
-    # Flag any AUR package installed or updated within the attack window.
+    # ── §1 AUR packages + install dates ───────────────────────────────────────
     - name: "[1] AUR packages and install dates"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  1. AUR PACKAGES + INSTALL DATES"
-          echo "  Flag: any package with Install Date of 2026-06-10, 11, or 12"
-          echo "================================================================================"
-          FLAGGED=0
+          echo "========================================"
+          echo "  [1] AUR PACKAGES + INSTALL DATES"
+          echo "========================================"
+          echo "[!] Critical windows:"
+          echo "    Wave 1: {{ critical_wave1_start }} to {{ critical_wave1_end }}"
+          echo "    Wave 2: {{ critical_wave2_start }} to {{ critical_wave2_end }}"
+          echo ""
           pacman -Qqm | while read -r pkg; do
-            INFO=$(pacman -Qi "$pkg" 2>/dev/null \
-              | grep -E "^(Name\s*:|Version\s*:|Install Date\s*:)" \
-              | paste - - -)
-            if echo "$INFO" | grep -qE "Jun (10|11|12).* 2026"; then
-              echo "[!! CRITICAL WINDOW !!] $INFO"
+            info=$(pacman -Qi "$pkg" 2>/dev/null | grep -E "^(Name\s*:|Version\s*:|Install Date\s*:)" | paste - - -)
+            date_str=$(echo "$info" | grep -oP '(?<=Install Date\s*:\s{0,10})\S.*' | sed 's/^\s*//')
+            if echo "$date_str" | grep -qE "Jun (10|11|12) .* 2026"; then
+              echo "[!! WAVE 1 CRITICAL WINDOW !!] $info"
+            elif echo "$date_str" | grep -qE "Jun (13|14) .* 2026"; then
+              echo "[!! WAVE 2 CRITICAL WINDOW !!] $info"
             else
-              echo "[ ok ]              $INFO"
+              echo "[ ok ] $info"
             fi
           done
-          echo ""
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 2: PKGBUILD cache IOC string scan ──────────────────────────────
-    # Scoped to PKGBUILD, *.install, and .SRCINFO files only — intentionally
-    # excludes src/ subdirectories to avoid false positives from extracted
-    # source trees (e.g. Python 2.7.18 distutils referencing 'pre_install_script').
-    - name: "[2] PKGBUILD cache — IOC string scan (PKGBUILD/install files only)"
+    # ── §2 Community compromised package list cross-reference ─────────────────
+    - name: "[2] Cross-reference against community compromised package list"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  2. PKGBUILD CACHE — IOC STRING SCAN"
-          echo "  Scope: PKGBUILD, *.install, .SRCINFO files only (src/ excluded)"
-          echo "================================================================================"
+          echo "========================================"
+          echo "  [2] COMMUNITY COMPROMISED PACKAGE LIST CHECK"
+          echo "========================================"
+          echo "[!] Source: {{ community_list_url }}"
+          echo ""
+          # Fetch the list; fall back gracefully if no internet
+          PKG_LIST=$(curl -sf --max-time 10 "{{ community_list_url }}" 2>/dev/null)
+          if [ -z "$PKG_LIST" ]; then
+            echo "[WARN] Could not fetch community list — skipping cross-reference."
+            echo "       Run manually: curl -sf {{ community_list_url }}"
+          else
+            LINE_COUNT=$(echo "$PKG_LIST" | wc -l)
+            echo "[info] Fetched ${LINE_COUNT} known-compromised package names."
+            echo ""
+            INSTALLED_AUR=$(pacman -Qqm)
+            HITS=0
+            while IFS= read -r bad_pkg; do
+              bad_pkg=$(echo "$bad_pkg" | tr -d '[:space:]')
+              [ -z "$bad_pkg" ] && continue
+              if echo "$INSTALLED_AUR" | grep -qxF "$bad_pkg"; then
+                echo "[!! MATCH !!] Installed package matches known-compromised: $bad_pkg"
+                HITS=$((HITS+1))
+              fi
+            done <<< "$PKG_LIST"
+            if [ "$HITS" -eq 0 ]; then
+              echo "[clean] No installed AUR packages found in community compromised list."
+            else
+              echo ""
+              echo "[SUMMARY: REVIEW] $HITS package(s) matched the community compromised list."
+            fi
+          fi
+        } >> {{ report_path }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      ignore_errors: true
+      tags: [audit]
+
+    # ── §3 PKGBUILD cache — IOC string scan (Wave 1) ──────────────────────────
+    - name: "[3] PKGBUILD cache — Wave 1 IOC string scan (PKGBUILD/install files only)"
+      shell: |
+        {
+          echo ""
+          echo "========================================"
+          echo "  [3] PKGBUILD CACHE — WAVE 1 IOC STRING SCAN"
+          echo "========================================"
+          echo "[!] Patterns: atomic-lockfile, js-digest, attacker account names"
+          echo "[!] Scope: PKGBUILD, *.install, .SRCINFO files only (not source trees)"
+          echo ""
+          IOC_PATTERNS="{{ ioc_accounts }}|{{ ioc_npm_pkgs }}"
           FOUND=0
           for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
             [ -d "$CACHE_DIR" ] || continue
             echo "--- Scanning: ${CACHE_DIR} ---"
-            MATCHES=$(find "$CACHE_DIR" -maxdepth 2 \
-              \( -name "PKGBUILD" -o -name "*.install" -o -name ".SRCINFO" \) \
-              -print0 2>/dev/null \
-              | xargs -0 grep -InE \
-                'atomic-lockfile|js-digest|lockfile-js|herbsobering|custodiatovar|veramagalhaes|franziskaweber|tobiaswesterburg|ellenmyklebust' \
-                2>/dev/null)
-            if [ -n "$MATCHES" ]; then
-              echo "$MATCHES"
-              echo "[!! MATCH FOUND — REVIEW ABOVE !!]"
+            result=$(find "$CACHE_DIR" -maxdepth 2 \( -name "PKGBUILD" -o -name "*.install" -o -name ".SRCINFO" \) \
+              -print0 2>/dev/null | xargs -0 grep -lInE "${IOC_PATTERNS}" 2>/dev/null)
+            if [ -n "$result" ]; then
+              echo "[!! MATCH FOUND !!]"
+              echo "$result" | while read -r f; do
+                echo "  File: $f"
+                grep -nE "${IOC_PATTERNS}" "$f"
+              done
               FOUND=1
             else
-              echo "[clean — no IOC strings in PKGBUILD files under ${CACHE_DIR}]"
+              echo "[clean] No Wave 1 IOC strings found in ${CACHE_DIR}"
             fi
             echo ""
           done
-          if [ $FOUND -eq 0 ]; then
-            echo "[SUMMARY: PASS — No IOC strings found in any PKGBUILD/install file]"
-          else
-            echo "[SUMMARY: FAIL — IOC STRINGS DETECTED — SEE ABOVE]"
-          fi
-          echo ""
+          [ "$FOUND" -gt 0 ] && echo "[SUMMARY: REVIEW] Wave 1 IOC strings detected in PKGBUILD cache."
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 3: Suspicious PKGBUILD hooks and JS runtime deps ──────────────
-    # Same maxdepth-2 scope as §2 — PKGBUILD/install files only.
-    # The grub-xen-git post_install() hook and Python bdist references that
-    # fired as false positives in a broad recursive scan will not appear here.
-    - name: "[3] PKGBUILD cache — suspicious install hooks and JS runtimes"
+    # ── §4 PKGBUILD cache — Wave 2 obfuscated shell detection ────────────────
+    - name: "[4] PKGBUILD cache — Wave 2 obfuscated shell detection"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  3. PKGBUILD CACHE — SUSPICIOUS HOOKS / JS RUNTIME DEPS"
-          echo "  Scope: PKGBUILD, *.install, .SRCINFO files only (src/ excluded)"
-          echo "  Note: post_install/post_upgrade in *.install files are normal for many"
-          echo "        packages (e.g. bootloaders). Flag only if combined with npm/bun/node."
-          echo "================================================================================"
+          echo "========================================"
+          echo "  [4] PKGBUILD CACHE — WAVE 2 OBFUSCATED SHELL DETECTION"
+          echo "========================================"
+          echo "[!] Wave 2 used hex/octal-escaped commands to evade literal grep."
+          echo "    e.g. \$'\\x63'\"d\" \"/\"'t'\"m\"'p' is 'cd /tmp' with each char escaped."
+          echo "[!] Patterns: hex escapes (\\xNN), octal escapes (\\NNN) in install hooks,"
+          echo "    unexpected 'bun' runtime dependency, obfuscated variable quoting."
+          echo ""
+          OBFUSC_PATTERN='\\\\x[0-9a-fA-F]{2}|\\\\[0-7]{3}|depends.*[=\(][^)]*bun[^)]*[\)$]'
+          FOUND=0
+          for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
+            [ -d "$CACHE_DIR" ] || continue
+            echo "--- Scanning: ${CACHE_DIR} ---"
+            result=$(find "$CACHE_DIR" -maxdepth 2 \( -name "PKGBUILD" -o -name "*.install" -o -name ".SRCINFO" \) \
+              -print0 2>/dev/null | xargs -0 grep -lInP "${OBFUSC_PATTERN}" 2>/dev/null)
+            if [ -n "$result" ]; then
+              echo "[!! POTENTIAL MATCH !!] (manual review required — may be legitimate)"
+              echo "$result" | while read -r f; do
+                echo "  File: $f"
+                grep -nP "${OBFUSC_PATTERN}" "$f"
+              done
+              FOUND=1
+            else
+              echo "[clean] No Wave 2 obfuscation patterns found in ${CACHE_DIR}"
+            fi
+            echo ""
+          done
+          [ "$FOUND" -gt 0 ] && echo "[SUMMARY: REVIEW] Possible Wave 2 obfuscation detected — manual PKGBUILD review needed." || true
+        } >> {{ report_path }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      ignore_errors: true
+      tags: [audit]
+
+    # ── §5 PKGBUILD cache — suspicious install hooks and JS runtimes ──────────
+    - name: "[5] PKGBUILD cache — suspicious install hooks and JS runtimes"
+      shell: |
+        {
+          echo ""
+          echo "========================================"
+          echo "  [5] PKGBUILD CACHE — SUSPICIOUS HOOKS AND JS RUNTIME INVOCATIONS"
+          echo "========================================"
+          echo "[!] Flagging: npm install, bun add/install, yarn add, pnpm add in hooks"
+          echo "[!] Scope: PKGBUILD, *.install, .SRCINFO files only"
+          echo ""
+          HOOK_PATTERN='npm (install|ci)|bun (add|install|x)|yarn add|pnpm add'
           FOUND=0
           for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
             [ -d "$CACHE_DIR" ] || continue
             echo "--- ${CACHE_DIR} ---"
-            HOOK_MATCHES=$(find "$CACHE_DIR" -maxdepth 2 \
-              \( -name "PKGBUILD" -o -name "*.install" -o -name ".SRCINFO" \) \
-              -print0 2>/dev/null \
-              | xargs -0 grep -InE \
-                'npm install|npm ci|yarn add|pnpm add|bun add|bun install|npx |bunx ' \
-                2>/dev/null)
-            if [ -n "$HOOK_MATCHES" ]; then
-              echo "$HOOK_MATCHES"
-              echo "[!! JS PACKAGE MANAGER IN PKGBUILD — REVIEW !!]"
+            result=$(find "$CACHE_DIR" -maxdepth 2 \( -name "PKGBUILD" -o -name "*.install" -o -name ".SRCINFO" \) \
+              -print0 2>/dev/null | xargs -0 grep -lInE "${HOOK_PATTERN}" 2>/dev/null)
+            if [ -n "$result" ]; then
+              echo "[!! JS RUNTIME INVOCATION FOUND !!]"
+              echo "$result" | while read -r f; do
+                echo "  File: $f"
+                grep -nE "${HOOK_PATTERN}" "$f"
+              done
               FOUND=1
             else
-              echo "[clean — no unexpected JS package manager calls found]"
+              echo "[clean] No JS runtime invocations found in ${CACHE_DIR}"
             fi
             echo ""
           done
-          if [ $FOUND -eq 0 ]; then
-            echo "[SUMMARY: PASS — No suspicious hooks found in PKGBUILD/install files]"
-          else
-            echo "[SUMMARY: REVIEW — JS package manager calls found — see above]"
-          fi
-          echo ""
+          [ "$FOUND" -gt 0 ] && echo "[SUMMARY: REVIEW] JS runtime invocations detected in PKGBUILD cache." || true
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 4: Critical-window package PKGBUILD dump ──────────────────────
-    # For any AUR package with an install date inside the critical window,
-    # dump the full cached PKGBUILD for direct inspection. This lets you verify
-    # the exact build script that was used without relying on pattern matching.
-    - name: "[4] Critical-window packages — cached PKGBUILD content dump"
+    # ── §6 Critical-window PKGBUILD content dump ──────────────────────────────
+    - name: "[6] Critical-window packages — cached PKGBUILD content dump"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  4. CRITICAL-WINDOW PACKAGES — CACHED PKGBUILD DUMP"
-          echo "  Dumps the cached PKGBUILD for any package installed 2026-06-10 thru 2026-06-12."
-          echo "  An absent PKGBUILD means the cache was cleaned after install."
-          echo "================================================================================"
-          FOUND_ANY=0
+          echo "========================================"
+          echo "  [6] CRITICAL-WINDOW PACKAGES — PKGBUILD DUMP"
+          echo "========================================"
+          echo "[!] Dumping cached PKGBUILD for any package installed in either wave window"
+          echo ""
           pacman -Qqm | while read -r pkg; do
-            IDATE=$(pacman -Qi "$pkg" 2>/dev/null | grep "^Install Date" | sed 's/Install Date\s*:\s*//')
-            if echo "$IDATE" | grep -qE "Jun (10|11|12).* 2026"; then
-              FOUND_ANY=1
-              echo ""
-              echo "  Package : $pkg"
-              echo "  Installed: $IDATE"
-              PKG_FOUND=0
+            date_str=$(pacman -Qi "$pkg" 2>/dev/null | grep "Install Date" | cut -d: -f2- | sed 's/^\s*//')
+            if echo "$date_str" | grep -qE "Jun (10|11|12|13|14) .* 2026"; then
+              echo "--- PKGBUILD for: $pkg (installed: $date_str) ---"
               for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
-                PKGBUILD="${CACHE_DIR}/${pkg}/PKGBUILD"
-                if [ -f "$PKGBUILD" ]; then
-                  PKG_FOUND=1
-                  echo "  Source  : ${PKGBUILD}"
-                  echo "  --- BEGIN PKGBUILD ---"
-                  cat "$PKGBUILD"
-                  echo "  --- END PKGBUILD ---"
-                fi
+                PBFILE="${CACHE_DIR}/${pkg}/PKGBUILD"
+                [ -f "$PBFILE" ] && cat "$PBFILE" && echo "" || true
               done
-              if [ $PKG_FOUND -eq 0 ]; then
-                echo "  [PKGBUILD not in cache — was cleaned after install or never cached]"
-                echo "  [Verify manually at: https://aur.archlinux.org/packages/${pkg}]"
-              fi
+              echo ""
             fi
           done
-          echo ""
-          # The while loop runs in a subshell; use a temp file to surface the flag
-          pacman -Qqm | while read -r pkg; do
-            pacman -Qi "$pkg" 2>/dev/null | grep "^Install Date" | grep -qE "Jun (10|11|12).* 2026" && echo "hit" && break
-          done | grep -q "hit" || echo "  [No packages fall within the critical window — section not applicable]"
-          echo ""
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 5: Stale yay/paru cache packages ───────────────────────────────
-    # Lists packages present in the build cache that are NOT currently installed.
-    # These are leftover build artifacts from packages that were tried and removed,
-    # or failed builds. Not a security concern on its own, but good housekeeping
-    # context — and useful if a stale cache entry matches a known-bad package name.
-    - name: "[5] Stale yay/paru cache packages (cached but not installed)"
+    # ── §7 Stale cache inventory ───────────────────────────────────────────────
+    - name: "[7] Stale yay/paru cache packages (cached but not installed)"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  5. STALE CACHE PACKAGES (in cache but not installed)"
-          echo "  These are build artifacts from packages not currently active."
-          echo "  Not a security IOC, but flag if name matches known-bad packages."
-          echo "================================================================================"
-          INSTALLED=$(pacman -Qqm 2>/dev/null | sort)
+          echo "========================================"
+          echo "  [7] STALE CACHE PACKAGES (cached but not installed)"
+          echo "========================================"
+          echo ""
           for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
             [ -d "$CACHE_DIR" ] || continue
             echo "--- ${CACHE_DIR} ---"
-            FOUND_STALE=0
-            for PKG_DIR in "${CACHE_DIR}"/*/; do
-              [ -d "$PKG_DIR" ] || continue
-              PKG=$(basename "$PKG_DIR")
-              if ! echo "$INSTALLED" | grep -qx "$PKG"; then
-                echo "  [stale] $PKG"
-                FOUND_STALE=1
-              fi
+            for pkg_dir in "$CACHE_DIR"/*/; do
+              pkg=$(basename "$pkg_dir")
+              pacman -Qi "$pkg" &>/dev/null || echo "  [stale] $pkg"
             done
-            [ $FOUND_STALE -eq 0 ] && echo "  [none — cache matches installed package list]"
             echo ""
           done
-          echo ""
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 6: eBPF rootkit artifacts ─────────────────────────────────────
-    - name: "[6] eBPF rootkit artifacts"
+    # ── §8 eBPF rootkit artifacts ─────────────────────────────────────────────
+    - name: "[8] eBPF rootkit artifacts"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  6. eBPF ROOTKIT ARTIFACTS"
-          echo "  Primary IOC: any 'hidden_*' entries in /sys/fs/bpf/"
-          echo "  A clean system shows only '.' and '..' with no loaded BPF programs."
-          echo "================================================================================"
+          echo "========================================"
+          echo "  [8] eBPF ROOTKIT ARTIFACTS"
+          echo "========================================"
+          echo "[!] 'hidden_*' entries in /sys/fs/bpf/ are a primary IOC"
+          echo ""
           echo "--- /sys/fs/bpf/ listing ---"
           ls -la /sys/fs/bpf/ 2>/dev/null || echo "[/sys/fs/bpf/ not accessible]"
           echo ""
           echo "--- bpftool prog show ---"
-          bpftool prog show 2>/dev/null || echo "[bpftool not available or no BPF programs loaded]"
+          bpftool prog show 2>/dev/null || echo "[bpftool not installed or no BPF programs loaded]"
           echo ""
           echo "--- bpftool map show ---"
-          bpftool map show 2>/dev/null || echo "[bpftool not available or no BPF maps loaded]"
-          echo ""
+          bpftool map show 2>/dev/null || echo "[bpftool not installed or no BPF maps loaded]"
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 7: Systemd persistence ────────────────────────────────────────
-    - name: "[7] Systemd units modified after {{ critical_date }}"
+    # ── §9 Systemd units modified in critical window ──────────────────────────
+    - name: "[9] Systemd units modified after {{ critical_date }}"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  7. SYSTEMD PERSISTENCE — UNITS MODIFIED AFTER {{ critical_date }}"
-          echo "  Expected: /var/lib/pacman and /var/lib/lastlog will appear if yay was run."
-          echo "  Flag: any unfamiliar .service or .timer in /etc/systemd/system."
-          echo "================================================================================"
+          echo "========================================"
+          echo "  [9] SYSTEMD UNITS MODIFIED AFTER {{ critical_date }}"
+          echo "========================================"
+          echo ""
           echo "--- /etc/systemd/system ---"
-          RESULTS=$(find /etc/systemd/system -newermt "{{ critical_date }}" -type f 2>/dev/null | sort)
-          [ -n "$RESULTS" ] && echo "$RESULTS" || echo "[none found]"
+          find /etc/systemd/system -newermt "{{ critical_date }}" -type f 2>/dev/null | sort || echo "[none found]"
           echo ""
           echo "--- /var/lib (new top-level dirs) ---"
-          RESULTS=$(find /var/lib -maxdepth 1 -type d -newermt "{{ critical_date }}" 2>/dev/null | sort)
-          [ -n "$RESULTS" ] && echo "$RESULTS" || echo "[none found]"
+          find /var/lib -maxdepth 1 -type d -newermt "{{ critical_date }}" 2>/dev/null | sort || echo "[none found]"
           echo ""
-          echo "--- user systemd dirs (all home dirs) ---"
-          FOUND_USER=0
+          echo "--- user systemd dirs ---"
           for UHOME in /root /home/*; do
             UDIR="${UHOME}/.config/systemd/user"
             [ -d "$UDIR" ] || continue
-            FOUND_USER=1
             echo "  ${UDIR}:"
-            RESULTS=$(find "$UDIR" -maxdepth 1 -newermt "{{ critical_date }}" -type f 2>/dev/null | sort)
-            [ -n "$RESULTS" ] && echo "$RESULTS" || echo "    [none found]"
+            find "$UDIR" -maxdepth 1 -newermt "{{ critical_date }}" -type f 2>/dev/null | sort || echo "    [none found]"
           done
-          [ $FOUND_USER -eq 0 ] && echo "  [no user systemd dirs found]"
-          echo ""
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 8: Malicious npm/bun cache artifacts ───────────────────────────
-    - name: "[8] npm/bun cache — malicious package artifacts"
+    # ── §10 npm/bun cache artifacts ───────────────────────────────────────────
+    - name: "[10] npm/bun cache — malicious package artifacts"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  8. NPM / BUN CACHE — MALICIOUS PACKAGE ARTIFACTS"
-          echo "================================================================================"
-          echo "--- Directories named atomic-lockfile, js-digest, lockfile-js ---"
-          RESULTS=$(find /root /home -type d \
-            \( -name "atomic-lockfile" -o -name "js-digest" -o -name "lockfile-js" \) \
-            2>/dev/null | sort)
-          [ -n "$RESULTS" ] && echo "$RESULTS" || echo "[none found]"
+          echo "========================================"
+          echo "  [10] NPM / BUN CACHE — MALICIOUS PACKAGE ARTIFACTS"
+          echo "========================================"
+          echo "[!] Wave 1: atomic-lockfile, js-digest, lockfile-js"
+          echo "[!] Wave 2: ansi-colors (via bun), js-digest"
           echo ""
-          echo "--- npm cache JSON entries referencing malicious packages ---"
-          RESULTS=$(find /root/.npm /home/*/.npm -name "*.json" 2>/dev/null \
-            | xargs grep -lE 'atomic-lockfile|js-digest|herbsobering' 2>/dev/null)
-          [ -n "$RESULTS" ] && echo "$RESULTS" || echo "[none found]"
+          find /root /home -type d \( \
+            -name "atomic-lockfile" \
+            -o -name "js-digest" \
+            -o -name "lockfile-js" \
+            -o -name "ansi-colors" \
+          \) 2>/dev/null | sort && echo "" || echo "[none found]"
+          echo "--- npm global cache scan ---"
+          find /root/.npm /home/*/.npm -name "*.json" 2>/dev/null \
+            | xargs grep -lE "{{ ioc_npm_pkgs }}" 2>/dev/null \
+            && echo "[MATCH — review above]" || echo "[clean]"
           echo ""
+          echo "--- bun cache scan ---"
+          find /root/.bun /home/*/.bun -name "*.json" 2>/dev/null \
+            | xargs grep -lE "{{ ioc_npm_pkgs }}" 2>/dev/null \
+            && echo "[MATCH — review above]" || echo "[clean or bun not present]"
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 9: 'deps' infostealer binary ──────────────────────────────────
-    - name: "[9] Search for 'deps' infostealer binary"
+    # ── §11 'deps' infostealer binary ─────────────────────────────────────────
+    - name: "[11] Search for 'deps' infostealer binary"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  9. 'deps' INFOSTEALER BINARY SEARCH"
-          echo "  Rust ELF64 binary dropped by atomic-lockfile preinstall hook."
-          echo "================================================================================"
-          echo "--- /tmp, /var/tmp, /run ---"
-          RESULTS=$(find /tmp /var/tmp /run -name "deps" -type f 2>/dev/null)
-          [ -n "$RESULTS" ] \
-            && echo "[!! FOUND !! — ${RESULTS}]" \
-            || echo "[not found]"
+          echo "========================================"
+          echo "  [11] 'deps' INFOSTEALER BINARY SEARCH"
+          echo "========================================"
+          echo "[!] Rust ELF64 binary dropped to /tmp, /var/tmp, /run"
           echo ""
-          echo "--- /root and /home ---"
-          RESULTS=$(find /root /home -name "deps" -type f 2>/dev/null)
-          [ -n "$RESULTS" ] \
-            && echo "[!! FOUND !! — ${RESULTS}]" \
-            || echo "[not found]"
+          echo "--- /tmp /var/tmp /run ---"
+          find /tmp /var/tmp /run -name "deps" -type f 2>/dev/null \
+            && echo "[!! FOUND — treat as compromised !!]" || echo "[not found]"
           echo ""
+          echo "--- /home and /root ---"
+          find /root /home -name "deps" -type f 2>/dev/null \
+            && echo "[!! FOUND — treat as compromised !!]" || echo "[not found]"
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 10: Active network connections ─────────────────────────────────
-    - name: "[10] Active non-loopback network connections"
+    # ── §12 Active network connections ────────────────────────────────────────
+    - name: "[12] Active non-loopback network connections"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  10. ACTIVE NETWORK CONNECTIONS (non-loopback)"
-          echo "  Malware exfiltrates via encrypted channels over Tor."
-          echo "  Expected on k3s nodes: connections to :6443 (API server) and :10250 (kubelet)."
-          echo "================================================================================"
-          ss -tnp 2>/dev/null | grep -v '127\.0\.0\.\|::1' \
-            || echo "[no non-loopback connections, or ss unavailable]"
+          echo "========================================"
+          echo "  [12] ACTIVE NETWORK CONNECTIONS (non-loopback)"
+          echo "========================================"
           echo ""
+          ss -tnp 2>/dev/null | grep -v '127\.0\.0\.\|::1' || echo "[no non-loopback connections or ss unavailable]"
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Section 11: Unexpected JS runtime presence ─────────────────────────────
-    - name: "[11] Unexpected JS runtime presence"
+    # ── §13 Unexpected JS runtime presence ────────────────────────────────────
+    - name: "[13] Unexpected JS runtime presence (node, bun, npm)"
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  11. UNEXPECTED RUNTIME PRESENCE (node, npm, bun, yarn, pnpm)"
-          echo "  None of these should exist on a k3s node unless intentionally installed."
-          echo "  Their presence is a strong IOC — the attack cannot execute without one."
-          echo "================================================================================"
-          FOUND_RT=0
+          echo "========================================"
+          echo "  [13] UNEXPECTED RUNTIME PRESENCE (node, bun, npm)"
+          echo "========================================"
+          echo "[!] These should not be present on a k3s cluster node"
+          echo ""
           for CMD in node npm bun npx yarn pnpm; do
             PATH_RESULT=$(command -v "$CMD" 2>/dev/null)
             if [ -n "$PATH_RESULT" ]; then
-              VERSION=$("$CMD" --version 2>/dev/null || echo "unknown")
-              echo "[!! FOUND !!] ${CMD} -> ${PATH_RESULT}  (${VERSION})"
-              FOUND_RT=1
+              echo "[!! FOUND !!] ${CMD} -> ${PATH_RESULT} ($("$CMD" --version 2>/dev/null || echo 'version unknown'))"
             else
-              echo "[absent]      ${CMD}"
+              echo "[absent]  ${CMD}"
             fi
           done
-          echo ""
-          if [ $FOUND_RT -eq 0 ]; then
-            echo "[SUMMARY: PASS — No JS runtimes present]"
-          else
-            echo "[SUMMARY: REVIEW — JS runtime(s) found — verify they are intentional]"
-          fi
-          echo ""
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
+      ignore_errors: true
       tags: [audit]
 
-    # ── Overall verdict ────────────────────────────────────────────────────────
-    # Scans the completed report for known-bad markers and writes a one-line verdict.
+    # ── Overall verdict ───────────────────────────────────────────────────────
     - name: Write overall verdict
       shell: |
         {
           echo ""
-          echo "================================================================================"
-          echo "  OVERALL VERDICT"
-          echo "================================================================================"
+          echo "========================================"
+          echo "  OVERALL VERDICT — {{ ansible_fqdn }}"
+          echo "========================================"
           REPORT="{{ report_path }}"
-          if grep -qE '\[!! (MATCH FOUND|FOUND !!)' "$REPORT" 2>/dev/null; then
-            echo "  !! COMPROMISED / REVIEW REQUIRED !!"
-            echo "  One or more high-confidence IOCs were detected. See flagged sections above."
-            echo "  Recommended actions:"
-            echo "    1. Isolate the node from the network immediately."
-            echo "    2. Rotate all credentials (SSH keys, tokens, cloud API keys)."
-            echo "    3. Boot from live media and inspect flagged files from a trusted OS."
-            echo "    4. Consider full reinstall — eBPF rootkits cannot be fully cleaned in-place."
-          elif grep -qE '\[SUMMARY: REVIEW' "$REPORT" 2>/dev/null; then
-            echo "  REVIEW — Low-confidence flags present, manual verification recommended."
-            echo "  No high-confidence IOCs detected, but some findings warrant inspection."
+          CRITICAL=$(grep -c '\[!!' "$REPORT" 2>/dev/null || echo 0)
+          REVIEWS=$(grep -c 'SUMMARY: REVIEW' "$REPORT" 2>/dev/null || echo 0)
+          MATCHES=$(grep -c 'MATCH' "$REPORT" 2>/dev/null || echo 0)
+
+          if grep -q 'FOUND — treat as compromised' "$REPORT"; then
+            echo "[COMPROMISED] 'deps' binary found — rotate all credentials immediately."
+            echo "  Next steps: boot from trusted media, audit SSH keys/tokens/env files,"
+            echo "  remove malicious systemd units, consider full reinstall."
+          elif [ "$MATCHES" -gt 2 ] || [ "$REVIEWS" -gt 1 ]; then
+            echo "[REVIEW REQUIRED] Multiple IOC signals detected. Investigate flagged sections."
+            echo "  Run community script for authoritative package check:"
+            echo "  curl -sf https://raw.githubusercontent.com/lenucksi/aur-malware-check/main/aur_check-v2.sh | bash"
           else
-            echo "  CLEAN — No IOCs detected on this node."
-            echo "  All checks passed. No evidence of Atomic Arch campaign compromise."
+            echo "[CLEAN] No confirmed IOCs detected."
+            echo "  Re-run after any AUR upgrade during the campaign period."
+            echo "  Monitor: https://github.com/lenucksi/aur-malware-check"
           fi
-          echo "================================================================================"
           echo ""
+          echo "Upload this report to Glean for cross-referencing."
         } >> {{ report_path }}
-      ignore_errors: true
+      args:
+        executable: /bin/bash
       changed_when: true
       tags: [audit]
 
-    # ── Fetch & cleanup ────────────────────────────────────────────────────────
+    # ── Fetch report to control node ──────────────────────────────────────────
     - name: Fetch report to control node
       fetch:
         src: "{{ report_path }}"
-        dest: "{{ fetch_dest }}"
+        dest: "{{ fetch_dest }}aur_audit_{{ inventory_hostname }}.txt"
         flat: true
-      tags: [fetch]
+      tags: [audit, fetch]
 
     - name: Remove report file from remote node
       file:
         path: "{{ report_path }}"
         state: absent
-      tags: [fetch]
+      tags: [audit, fetch]
 
