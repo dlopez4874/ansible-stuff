@@ -5,7 +5,6 @@
 *.bak
 .DS_Store
 aur_audit_results/
-inventory\nhost_vars/\ngroup_vars/
 inventory
 host_vars/
 group_vars/
