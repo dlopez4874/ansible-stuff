@@ -10,6 +10,11 @@
 #
 # Override control plane node if needed:
 #   playbook k3s_rolling_reboot.yml -e "k3s_control_plane=archnode002"
+#
+# Note on XCP-ng VMs: the network interface transitions to "No route to host"
+# very abruptly during reboot. pre_reboot_delay and post_reboot_delay on the
+# control plane task give Ansible time to set up reconnection polling before
+# the network drops, and wait for it to fully stabilize before reconnecting.
 
 - name: Gracefully reboot k3s worker nodes
   hosts: arch
@@ -32,6 +37,10 @@
     - name: Reboot node
       reboot:
         reboot_timeout: 300
+        pre_reboot_delay: 5
+        post_reboot_delay: 15
+        connect_timeout: 15
+        test_command: uptime
 
     - name: Wait for node to be Ready
       shell: "{{ kubectl }} wait node/{{ ansible_fqdn }} --for=condition=Ready --timeout=120s"
@@ -66,6 +75,10 @@
     - name: Reboot control plane
       reboot:
         reboot_timeout: 300
+        pre_reboot_delay: 10
+        post_reboot_delay: 30
+        connect_timeout: 15
+        test_command: uptime
 
     - name: Wait for k3s API server to be reachable
       shell: "{{ kubectl }} get nodes"
@@ -85,4 +98,3 @@
 
     - name: Uncordon control plane node
       shell: "{{ kubectl }} uncordon {{ ansible_fqdn }}"
-
