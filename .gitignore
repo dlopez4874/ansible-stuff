@@ -8,3 +8,4 @@ aur_audit_results/
 inventory
 host_vars/
 group_vars/
+*.local.readme

@@ -1,8 +1,11 @@
 ---
-# Ephemeral Kerberos+CIFS mount for FlashArray share
+# Ephemeral Kerberos+CIFS mount for a FlashArray file share
 # - No /etc/fstab changes
 # - Mounts now (one-shot), unmount manually when done
 # - Uses user tickets (multiuser), so each user can kinit and access
+#
+# ad_realm / ad_domain / smb_server / smb_share come from group_vars/arch.yml,
+# which is gitignored. See lab-env.local.readme for the real values.
 
 - name: Ephemeral Kerberos CIFS mount (archnode001)
   hosts: archnode001
@@ -10,12 +13,7 @@
   gather_facts: yes
 
   vars:
-    realm_upper:  "YOGURT.LAB"
-    domain_lower: "yogurt.lab"
-
-    smb_server:   "nas01-yogurt.yogurt.lab"
-    smb_share:    "yogurt-smpexport1"
-    mount_point:  "/mnt/yogurt-smpexport1"
+    mount_point:  "/mnt/{{ smb_share }}"
 
     # SMB options tuned for FlashArray + modern clients
     cifs_opts: "sec=krb5,vers=3.1.1,seal,multiuser,_netdev"
@@ -37,7 +35,7 @@
         mode: "0644"
         content: |
           [libdefaults]
-            default_realm = {{ realm_upper }}
+            default_realm = {{ ad_realm }}
             dns_lookup_kdc = true
             dns_lookup_realm = true
             rdns = false
@@ -45,8 +43,8 @@
             renew_lifetime  = 7d
             forwardable = true
           [domain_realm]
-            .{{ domain_lower }} = {{ realm_upper }}
-            {{ domain_lower }} = {{ realm_upper }}
+            .{{ ad_domain }} = {{ ad_realm }}
+            {{ ad_domain }} = {{ ad_realm }}
 
     - name: Create mount point (no fstab)
       file:
@@ -65,7 +63,7 @@
       notify: daemon-reload
 
   tasks:
-    - name: Show DNS routing for yogurt.lab (informational)
+    - name: Show DNS routing for the SMB server (informational)
       command: /usr/bin/resolvectl query {{ smb_server }}
       register: dns_check
       changed_when: false
@@ -75,7 +73,7 @@
       debug:
         msg:
           - "This playbook mounts CIFS using Kerberos user tickets (multiuser)."
-          - "Each user should run:  kinit <user>@{{ realm_upper }}  before accessing {{ mount_point }}."
+          - "Each user should run:  kinit <user>@{{ ad_realm }}  before accessing {{ mount_point }}."
           - "DNS check for {{ smb_server }} (non-fatal): {{ dns_check.stdout | default('n/a') | trim }}"
 
     - name: Mount the CIFS share (ephemeral; no fstab)

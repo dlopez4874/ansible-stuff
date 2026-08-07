@@ -1,15 +1,14 @@
 ---
+# Kerberos + CIFS (user-ticket) mount for a FlashArray file share.
+# ad_realm / ad_domain / smb_server / smb_share come from group_vars/arch.yml,
+# which is gitignored. See lab-env.local.readme for the real values.
 - name: Kerberos + CIFS (user-ticket) mount for FlashArray share
   hosts: arch
   become: yes
   gather_facts: yes
 
   vars:
-    realm_upper: "YOGURT.LAB"
-    domain_lower: "yogurt.lab"
-    smb_server: "nas01-yogurt.yogurt.lab"
-    smb_share: "yogurt-smpexport1"
-    mount_point: "/mnt/yogurt-smpexport1"
+    mount_point:  "/mnt/{{ smb_share }}"
 
   pre_tasks:
     - name: Pick package names per distro
@@ -34,7 +33,7 @@
         mode: "0644"
         content: |
           [libdefaults]
-            default_realm = {{ realm_upper }}
+            default_realm = {{ ad_realm }}
             dns_lookup_kdc = true
             dns_lookup_realm = true
             rdns = false
@@ -42,12 +41,12 @@
             renew_lifetime  = 7d
             forwardable = true
           [realms]
-            {{ realm_upper }} = {
+            {{ ad_realm }} = {
               # leave empty to use DNS SRV (recommended)
             }
           [domain_realm]
-            .{{ domain_lower }} = {{ realm_upper }}
-            {{ domain_lower }} = {{ realm_upper }}
+            .{{ ad_domain }} = {{ ad_realm }}
+            {{ ad_domain }} = {{ ad_realm }}
 
     - name: Create mount point
       file:
