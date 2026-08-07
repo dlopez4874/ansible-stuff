@@ -1,4 +1,5 @@
 python3 -m venv ~/ansible-venv
 source ~/ansible-venv/bin/activate
 pip install ansible py-pure-client
-### set token var ### export PURE_API_TOKEN=REDACTED-ROTATED-TOKEN
+### set token var ### export PURE_API_TOKEN=<api token>
+# Real token value: see lab-env.local.readme (gitignored, never commit it).

@@ -1,13 +1,15 @@
 # fa-get-fqdn.yml
-# export PURE_API_TOKEN=REDACTED-ROTATED-TOKEN
-# export ARRAY_NAME=REDACTED-ARRAY-FQDN
+# Reads both inputs from the environment. Real values live in
+# lab-env.local.readme (gitignored) — do not paste them back in here:
+#   export PURE_API_TOKEN=<api token>
+#   export ARRAY_NAME=<array FQDN>
 - hosts: localhost
   become: yes
   tasks:
     - name: Gather info from FlashArray
-      purestorage.flasharray.purefa_info:
+      everpure.flasharray.purefa_info:
         fa_url: "{{ lookup('env', 'ARRAY_NAME') }}"
-        api_token: "{{ lookup('env', 'PURE_API_TOKEN') }}" 
+        api_token: "{{ lookup('env', 'PURE_API_TOKEN') }}"
       register: array_info
 
     - debug:
