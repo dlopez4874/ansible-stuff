@@ -1,16 +1,21 @@
 # fa-get-fqdn.yml
-# Reads both inputs from the environment. Real values live in
-# lab-env.local.readme (gitignored) — do not paste them back in here:
-#   export PURE_API_TOKEN=<api token>
-#   export ARRAY_NAME=<array FQDN>
+# Smoke-tests the everpure.flasharray collection against a lab array.
+#
+# Both inputs come from the ansible-vault encrypted group_vars/all.yml
+# (pure_api_token, pure_array_fqdn), which .gitignore excludes. No shell
+# exports needed — the `playbook` alias already passes --vault-password-file.
+#
+#   run  : playbook fa-get-fqdn.yml
+#   edit : ansible-vault edit --vault-password-file .secret group_vars/all.yml
 - hosts: localhost
   become: yes
   tasks:
     - name: Gather info from FlashArray
       everpure.flasharray.purefa_info:
-        fa_url: "{{ lookup('env', 'ARRAY_NAME') }}"
-        api_token: "{{ lookup('env', 'PURE_API_TOKEN') }}"
+        fa_url: "{{ pure_array_fqdn }}"
+        api_token: "{{ pure_api_token }}"
       register: array_info
+      no_log: true          # keeps the token out of -v output and any log
 
     - debug:
         msg: "{{ array_info.purefa_info }}"
