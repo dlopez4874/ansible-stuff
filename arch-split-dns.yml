@@ -1,23 +1,22 @@
 ---
 # Configure split DNS at runtime (non-persistent) on Arch
-# Routes only *.REDACTED-DOMAIN to REDACTED-IP and leaves DHCP DNS for everything else.
-- name: Ephemeral split-DNS for REDACTED-DOMAIN (systemd-resolved)
+# Routes only *.<ad_domain> to the AD DNS and leaves DHCP DNS for everything else.
+#
+# ad_domain / ad_dns come from group_vars/arch.yml, which is gitignored.
+# See lab-env.local.readme for the real values.
+- name: Ephemeral split-DNS for the AD domain (systemd-resolved)
   hosts: arch
   become: yes
   gather_facts: yes
 
-  vars:
-    yogurt_domain: "REDACTED-DOMAIN"
-    yogurt_dns: "REDACTED-IP"
-
   # Prefer the interface Ansible already knows about.
-  # If your facts don't contain this (rare), pass -e yogurt_iface=enp1s0
+  # If your facts don't contain this (rare), pass -e dns_iface=enp1s0
   vars_prompt: []
   vars_files: []
   pre_tasks:
-    - name: Pick default interface from facts (override with -e yogurt_iface=IFACE if needed)
+    - name: Pick default interface from facts (override with -e dns_iface=IFACE if needed)
       set_fact:
-        yogurt_iface: "{{ yogurt_iface | default(ansible_default_ipv4.interface, true) }}"
+        dns_iface: "{{ dns_iface | default(ansible_default_ipv4.interface, true) }}"
 
     - name: Ensure systemd-resolved is running and enabled
       ansible.builtin.systemd:
@@ -33,14 +32,14 @@
         force: true
 
   tasks:
-    - name: Route *.REDACTED-DOMAIN to the AD DNS (runtime only)
+    - name: Route *.{{ ad_domain }} to the AD DNS (runtime only)
       ansible.builtin.command:
-        cmd: "/usr/bin/resolvectl domain {{ yogurt_iface }} ~{{ yogurt_domain }}"
+        cmd: "/usr/bin/resolvectl domain {{ dns_iface }} ~{{ ad_domain }}"
       changed_when: true
 
     - name: Set DNS server for that interface (runtime only)
       ansible.builtin.command:
-        cmd: "/usr/bin/resolvectl dns {{ yogurt_iface }} {{ yogurt_dns }}"
+        cmd: "/usr/bin/resolvectl dns {{ dns_iface }} {{ ad_dns }}"
       changed_when: true
 
     - name: Flush resolver cache
@@ -50,16 +49,14 @@
 
     - name: Show current per-link DNS (for visibility)
       ansible.builtin.command:
-        cmd: "/usr/bin/resolvectl status {{ yogurt_iface }}"
+        cmd: "/usr/bin/resolvectl status {{ dns_iface }}"
       changed_when: false
       register: resolvectl_status
 
     - name: Print summary
       ansible.builtin.debug:
         msg:
-          - "Interface: {{ yogurt_iface }}"
-          - "Routing domain set: ~{{ yogurt_domain }}"
-          - "DNS for {{ yogurt_domain }} -> {{ yogurt_dns }}"
+          - "Interface: {{ dns_iface }}"
+          - "Routing domain set: ~{{ ad_domain }}"
+          - "DNS for {{ ad_domain }} -> {{ ad_dns }}"
           - "Reminder: this is runtime-only and will not survive a reboot."
-
-

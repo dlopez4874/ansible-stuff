@@ -1,14 +1,16 @@
 # umount-cifs.yml
+# smb_share comes from group_vars/arch.yml (gitignored) — see lab-env.local.readme.
 - hosts: archnode001
   become: yes
+  vars:
+    mount_point: "/mnt/{{ smb_share }}"
   tasks:
     - name: Unmount if mounted
-      command: /usr/bin/umount /mnt/REDACTED-SHARE
+      command: "/usr/bin/umount {{ mount_point }}"
       register: um
       failed_when: um.rc not in [0,32]     # rc=32: not mounted
       changed_when: um.rc == 0
 
     - name: Show mount status
-      command: /usr/bin/findmnt -T /mnt/REDACTED-SHARE || true
+      command: "/usr/bin/findmnt -T {{ mount_point }} || true"
       changed_when: false
-
