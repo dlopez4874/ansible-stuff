@@ -6,7 +6,8 @@
 
   vars:
     # ===== Required inputs =====
-    k3s_server_url: "https://10.235.169.108:6443"
+    # k3s_server_url comes from group_vars/arch.yml (gitignored).
+    # See lab-env.local.readme for the real value.
     k3s_token: "REPLACE_WITH_YOUR_NODE_TOKEN"
     k3s_version: "v1.33.5+k3s1"          # desired K3s version
     node_labels:
