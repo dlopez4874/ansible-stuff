@@ -26,11 +26,13 @@ playbooks kept deliberately flat and readable.
 
 ### aur_audit.yml
 
-The largest thing here. Sixteen checks across two campaigns with different
-delivery shapes: the June 2026 "Atomic Arch" waves (PKGBUILD → npm/bun → Rust
-infostealer, obfuscated shell, shell-config injection) and the July–August 2026
-account-takeover wave (a precompiled ELF committed into the package's own AUR
-git tree and called from `build()`).
+The largest thing here. Nineteen checks across three campaign periods with
+different delivery shapes: the June 2026 "Atomic Arch" waves (PKGBUILD → npm/bun
+→ Rust infostealer, obfuscated shell, shell-config injection), the July–August
+2026 account-takeover wave (a precompiled ELF committed into the package's own
+AUR git tree and called from `build()`), and the August–October 2026 activity
+after pushes reopened (install-scriptlet backdoors, the hellscripter SSH worm
+dropping CHAOS RAT as a fake systemd font service, and yay/paru typosquats).
 
 Detection notes worth knowing:
 
@@ -38,6 +40,9 @@ Detection notes worth knowing:
   dirs are git clones of the AUR repo, so an attacker-committed blob is *tracked*
   while ordinary build output is not. A blunt "any ELF under the cache" scan
   produces 20+ false positives per node from one package's build tree alone.
+- Aug–Oct checks look at the state a backdoor leaves behind (unowned SUID
+  binaries, extra sshd listeners, unexpected accounts, immutable systemd files),
+  not at which package caused it, since most of those packages were never listed.
 - Install-date windows are data (`ioc_windows`), not hard-coded month regexes,
   so adding a campaign needs no code change.
 - It cross-references the community IOC campaign index at runtime and reports
