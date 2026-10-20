@@ -16,7 +16,7 @@ playbooks kept deliberately flat and readable.
 | `k3s_rolling_reboot.yml` | Drain, reboot and uncordon workers one at a time (with delays for XCP-ng's network drop across reboot) |
 | `deploy_nginx.yml` | Deploy nginx via the Kubernetes API |
 | `ingress_nginx.yml` | Create a Traefik Ingress for nginx |
-| `archupdate.yml` | `pacman -Syu` across the cluster, then prune the package cache |
+| `archupdate.yml` | `pacman -Syu`, then AUR updates built unprivileged and installed as root (report first, `-e aur_build=true` to build), then prune the package cache |
 | `arch-split-dns.yml` | Runtime-only split DNS via systemd-resolved (routes one domain at the AD DNS, leaves DHCP DNS alone) |
 | `kerb-cifs.yml` | Persistent Kerberos CIFS mount of a FlashArray file share (fstab + systemd automount) |
 | `kerb-cifs-ephemeral.yml` | Same mount, one-shot, no fstab changes |

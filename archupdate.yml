@@ -2,7 +2,7 @@
 # archupdate.yml — System Upgrade Playbook
 #
 # Play 1: pacman full upgrade (official repos)
-# Play 2: yay AUR upgrade (AUR packages only)
+# Play 2: AUR upgrade — report first, then build with -e aur_build=true
 # Play 3: pacman package cache prune (paccache -rk2)
 #
 # Usage:
@@ -32,36 +32,149 @@
       when: pacman_results.changed or pacman_results.failed
 
 
-- name: Update AUR packages with yay
+# Play 2 builds as an unprivileged user and installs as root, so a malicious
+# build()/package() has no sudo to escalate with (the gentor/hyprland-fixes
+# trick). The cost: AUR-only dependencies are reported, not auto-built.
+#
+# Two-step by design:
+#   playbook archupdate.yml                    # report: diffs + deps, builds nothing
+#   playbook archupdate.yml -e aur_build=true  # build exactly what was reported
+# The build step refuses any package whose AUR head moved since the report, or
+# whose history was rewritten (force-push), so what you reviewed is what builds.
+#
+#   -e aur_rebuild=neofetch,yay   also rebuild these even if already current
+- name: Update AUR packages (unprivileged build, root install)
   hosts: arch
-  become_user: daniel
+  become: true
   ignore_errors: true
+  vars:
+    aur_user: daniel
+    aur_cache: "/home/{{ aur_user }}/.cache/yay"
+    aur_build: false
+    aur_rebuild: ""
+    aur_targets: "{{ (yay_pending.stdout_lines + (aur_rebuild.split(',') | select | list)) | unique | join(' ') }}"
 
   tasks:
 
-    - name: Check for pending AUR updates (dry run)
-      shell: yay -Qua
+    - name: Build user gets no passwordless pacman (makepkg must not reach root)
+      lineinfile:
+        path: /etc/sudoers
+        regexp: '^{{ aur_user }}\s.*NOPASSWD:\s*/usr/bin/pacman\s*$'
+        state: absent
+        validate: visudo -cf %s
+
+    - name: Check for pending AUR updates
+      become_user: "{{ aur_user }}"
+      shell: yay -Qua -q
       register: yay_pending
       changed_when: false
       failed_when: false
 
-    - name: Show pending AUR updates
-      debug:
-        msg: "{{ yay_pending.stdout_lines if yay_pending.stdout_lines else ['No AUR updates pending'] }}"
+    # Reads .SRCINFO from git, never sources the PKGBUILD, so nothing from the
+    # AUR executes here. Marks each reported head in .git/aur-reviewed.
+    - name: Fetch, diff and resolve dependencies (report)
+      become_user: "{{ aur_user }}"
+      shell: |
+        cd "{{ aur_cache }}" || exit 1
+        ARCH=$(uname -m)
+        for PKG in {{ aur_targets }}; do
+          BASE=$(grep -lxF "$(printf '\tpkgname = %s' "$PKG")" */.SRCINFO 2>/dev/null | head -1 | cut -d/ -f1)
+          BASE=${BASE:-$PKG}
+          NEW=0
+          if [ ! -d "$BASE/.git" ]; then
+            git clone -q "https://aur.archlinux.org/${BASE}.git" "$BASE" || { echo "SKIP $BASE: clone failed"; continue; }
+            NEW=1
+          fi
+          git -C "$BASE" fetch -q origin || { echo "SKIP $BASE: fetch failed"; continue; }
+          echo "=== $BASE  $(git -C "$BASE" rev-parse --short HEAD) -> $(git -C "$BASE" rev-parse --short origin/master)"
+          if [ $NEW -eq 1 ]; then
+            echo "--- new clone, full PKGBUILD and install scripts:"
+            git -C "$BASE" show origin/master:PKGBUILD
+            for I in $(git -C "$BASE" ls-tree --name-only origin/master | grep '\.install$'); do
+              git -C "$BASE" show "origin/master:$I"
+            done
+          else
+            git -C "$BASE" log --format='  %h %an <%ae> %aI %s' HEAD..origin/master
+            git -C "$BASE" diff --stat HEAD origin/master
+            git -C "$BASE" diff HEAD origin/master -- PKGBUILD '*.install'
+          fi
+          git -C "$BASE" ls-tree -r origin/master | awk '$1 != "100644" {print "  [review] non-plain tracked file: " $0}'
+          DEPS=$(git -C "$BASE" show origin/master:.SRCINFO \
+            | sed -nE "s/^[[:space:]]*(depends|makedepends|checkdepends)(_${ARCH})? = //p" | sort -u)
+          BLOCKED=0
+          for D in $(pacman -T $DEPS); do
+            N=${D%%[<>=]*}
+            if pacman -Sp --print-format %n "$N" >/dev/null 2>&1; then
+              echo "REPODEP $N"
+            else
+              echo "AURDEP $BASE needs $D (not in the official repos: build it first with -e aur_rebuild=$N)"
+              BLOCKED=1
+            fi
+          done
+          if [ $BLOCKED -eq 0 ]; then
+            echo "BUILDABLE $BASE"
+            {% if not aur_build | bool %}
+            git -C "$BASE" rev-parse origin/master > "$BASE/.git/aur-reviewed"
+            {% endif %}
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: aur_report
+      changed_when: false
+      when: aur_targets | length > 0
 
-    - name: Run yay AUR upgrade
-      kewlfft.aur.aur:
-        upgrade: true
-        use: yay
-        state: latest
-        aur_only: true
-      register: yay_results
-      when: yay_pending.stdout != ""
-
-    - name: Show yay results (if changed or failed)
+    - name: Show AUR report (review this before running with -e aur_build=true)
       debug:
-        var: yay_results
-      when: yay_results is not skipped and (yay_results.changed or yay_results.failed)
+        msg: "{{ aur_report.stdout_lines | default(['No AUR updates pending']) }}"
+
+    - name: Install missing repo dependencies (root)
+      command: >-
+        pacman -S --needed --asdeps --noconfirm
+        {{ aur_report.stdout_lines | select('match', '^REPODEP ') | map('regex_replace', '^REPODEP ', '') | unique | join(' ') }}
+      when:
+        - aur_build | bool
+        - aur_report.stdout_lines | default([]) | select('match', '^REPODEP ') | list | length > 0
+
+    - name: Build as {{ aur_user }} (no sudo available to PKGBUILD code)
+      become_user: "{{ aur_user }}"
+      shell: |
+        cd "{{ aur_cache }}" || exit 1
+        for BASE in {{ aur_report.stdout_lines | select('match', '^BUILDABLE ') | map('regex_replace', '^BUILDABLE ', '') | join(' ') }}; do
+          git -C "$BASE" fetch -q origin
+          HEAD_NOW=$(git -C "$BASE" rev-parse origin/master)
+          if [ "$HEAD_NOW" != "$(cat "$BASE/.git/aur-reviewed" 2>/dev/null)" ]; then
+            echo "SKIP $BASE: no report on file for AUR head ${HEAD_NOW:0:8} (never reported, or it moved since). Run the report again."
+            continue
+          fi
+          git -C "$BASE" merge -q --ff-only origin/master \
+            || { echo "SKIP $BASE: not a fast-forward (history rewritten upstream). Investigate."; continue; }
+          rm -f "$BASE/.git/aur-reviewed"
+          if (cd "$BASE" && makepkg -f --noconfirm --clean > ../makepkg-$BASE.log 2>&1); then
+            (cd "$BASE" && makepkg --packagelist) | while read -r F; do [ -f "$F" ] && echo "PKGFILE $F"; done
+            echo "BUILT $BASE"
+          else
+            echo "FAILED $BASE (last lines of {{ aur_cache }}/makepkg-$BASE.log):"
+            tail -15 "makepkg-$BASE.log"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: aur_built
+      when: aur_build | bool and aur_report is not skipped
+
+    - name: Show build results
+      debug:
+        msg: "{{ aur_built.stdout_lines }}"
+      when: aur_built is not skipped
+
+    - name: Install built packages (root)
+      command: >-
+        pacman -U --noconfirm
+        {{ aur_built.stdout_lines | select('match', '^PKGFILE ') | map('regex_replace', '^PKGFILE ', '') | join(' ') }}
+      when:
+        - aur_built is not skipped
+        - aur_built.stdout_lines | select('match', '^PKGFILE ') | list | length > 0
 
     - name: Get current date/time
       shell: date
