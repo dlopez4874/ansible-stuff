@@ -15,7 +15,9 @@
         fa_url: "{{ pure_array_fqdn }}"
         api_token: "{{ pure_api_token }}"
       register: array_info
-      no_log: true          # keeps the token out of -v output and any log
+      # No task-level no_log: the collection already marks api_token as
+      # no_log in its argument spec, so the token is masked even at -vvv.
+      # no_log here only hid the result and every error message.
 
     - debug:
         msg: "{{ array_info.purefa_info }}"
