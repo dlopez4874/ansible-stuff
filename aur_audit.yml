@@ -20,7 +20,24 @@
 #   hasher, converter, parser, validator, assembler, optimizer, translator).
 #   No JS runtime required, so §3/§5/§10/§13 do not see it — §15/§16 do.
 #   Arch disabled package adoption 2026-07-30 and disabled pushes entirely
-#   2026-08-01. Treat the window as open-ended until Arch reopens pushes.
+#   2026-08-01. Pushes reopened ~2026-08-11 (aurweb 6.5.0); adoption is still
+#   disabled. storageexplorer-bin (lourencopaiva) carried a dormant 'optimizer'.
+#
+# August-October 2026, after pushes reopened — SEVERAL SHAPES, STILL ONGOING:
+#   a) Backdoor in the install scriptlet / build(): x11-qemu-validation (sudo
+#      user + password sshd), hyprland-fixes (attacker ssh key, root sshd on
+#      3333/4444, Tailscale, SUID-root helpers + hourly timer, log wipe),
+#      gentor (build() runs `sudo ./setup`), xsnow/xsnow-bin ('systemmanager'
+#      fetched over Tor), fsearch-bin ('linter'). §5/§18.
+#   b) hellscripter worm (DirtyBlanket npm campaign, 2026-09-29; AUR typosquats
+#      yyay & co. by marchos1as, 2026-10-13): .install pipes linux.sh from
+#      web.archive.org/codeberg/gitflic into bash as root. Drops CHAOS RAT as
+#      'systemd-fontrenderd'/'systemd-fontcached' (chattr +i, Tor C2), then
+#      spreads over SSH using local keys + known_hosts and pushes the same
+#      loader into every AUR package those keys can reach. §3/§5/§17/§19.
+#   c) Malicious upstream, benign PKGBUILD: glanced (.vscode folderOpen task),
+#      plasma6-applet-quicklaunch (GitHub Actions cred exfil). Not executed by
+#      a plain makepkg build — name match only (§3/§16).
 #
 # References:
 #   https://github.com/lenucksi/aur-malware-check
@@ -30,11 +47,20 @@
 #     https://lists.archlinux.org/archives/list/aur-general@lists.archlinux.org/thread/DRDEU3JUSC72CB265XHXPFA3DFSLXPBP/
 #   hundreds of packages, committed ELF (aur-general, 2026-07-30):
 #     https://lists.archlinux.org/archives/list/aur-general@lists.archlinux.org/thread/BU6RECTA5DTJBL7Q4NQI5T3AKIN2FWSF/
+#   Aug-Oct reports (aur-general, mail-archive mirror; lists.archlinux.org is
+#   behind Anubis): https://www.mail-archive.com/aur-general@lists.archlinux.org/
+#     msg02738 storageexplorer-bin   msg02763 xsnow        msg02786 hyprland-fixes
+#     msg02799 gentor                msg02860 x11-qemu-validation
+#     msg02868 pingwin840            msg02930 fsearch-bin  msg02840 glanced
+#     msg02968 plasma6-applet-quicklaunch                  msg02983 marchos1as/yyay
+#   hellscripter worm / CHAOS RAT IOCs:
+#     https://safedep.io/dirtyblanket-express-impersonation-npm/
+#     https://osv.dev/vulnerability/MAL-2026-17242
 #
-# NOTE ON COVERAGE: as of 2026-08-07 the community IOC repo (lenucksi) has no
-# campaign data for the July-August wave — its last push predates it. §2 reports
-# that gap explicitly rather than implying coverage. §15/§16 are shape-based
-# detection, not hash-based: no payload hashes have been published for this wave.
+# NOTE ON COVERAGE: as of 2026-10-20 the community IOC repo (lenucksi) still has
+# no campaign data after June 2026. §2 reports that gap explicitly rather than
+# implying coverage. §15/§16/§18 are shape-based; §17 and ioc_sha256_list carry
+# the only published payload hashes (hellscripter, storageexplorer 'optimizer').
 #
 # Usage:
 #   ansible-playbook aur_audit.yml
@@ -43,7 +69,7 @@
 #
 # Output: ./aur_audit_results/<hostname>.txt on the control node.
 
-- name: AUR Malware Audit — multi-campaign (June 2026 + July-August 2026 waves)
+- name: AUR Malware Audit — multi-campaign (June 2026 through October 2026 waves)
   hosts: arch
   become: true
   gather_facts: true
@@ -58,7 +84,7 @@
 
     # Campaign windows. Checked against real install dates (date -d parsed to
     # ISO), not literal month-name regexes — so a new window needs no code edit.
-    # The July window ends "today" because the campaign is still open.
+    # The last window ends "today" because the campaigns are still open.
     ioc_windows:
       - id: "jun-w1"
         start: "2026-06-10"
@@ -70,8 +96,12 @@
         label: "Jun 2026 wave 2/3 - bun obfuscated + Cyrillic spam"
       - id: "jul-takeover"
         start: "2026-07-28"
+        end: "2026-08-10"
+        label: "Jul-Aug 2026 takeover - committed ELF dropper"
+      - id: "post-reopen"
+        start: "2026-08-11"
         end: "{{ ansible_date_time.date }}"
-        label: "Jul-Aug 2026 takeover - committed ELF dropper (ONGOING)"
+        label: "Aug-Oct 2026 - scriptlet backdoors, hellscripter worm, typosquats (ONGOING)"
 
     # Confirmed attacker accounts. arojas is deliberately NOT here (legitimate
     # Arch Trusted User: Antonio Rojas, arojas@archlinux.org).
@@ -89,6 +119,9 @@
       - simongeisler
       - zxp19821005
       - roantielemans          # Jul-Aug wave: pushed the org-cli Tor backdoor
+      - lourencopaiva          # Jul-Aug wave: storageexplorer-bin 'optimizer'
+      - pingwin840             # Sep 2026: orphan takeovers, Russian rc-file spam
+      - marchos1as             # Oct 2026: yay/paru typosquats, hellscripter loader
     ioc_accounts: "{{ ioc_accounts_list | join('|') }}"
 
     ioc_packages_list:
@@ -109,11 +142,13 @@
       - assembler
       - optimizer
       - translator
+      - systemmanager          # xsnow/xsnow-bin, Aug 2026, fetched over Tor
     ioc_payload_names: "{{ ioc_payload_names_list | join('|') }}"
 
-    # Packages named on aur-general for the Jul-Aug wave. NOT exhaustive —
-    # "hundreds" were reported and no complete list has been published.
-    ioc_jul_packages_list:
+    # Packages named on aur-general since July. NOT exhaustive — "hundreds"
+    # were reported and no complete list has been published (marchos1as's
+    # typosquats were deleted before anyone listed them; §19 covers those).
+    ioc_named_packages_list:
       - openconnect-sso
       - org-cli
       - proxypin
@@ -131,14 +166,47 @@
       - boringssl-git
       - cinnamon-no-nemo
       - windscribe-cli-v2-bin
-    ioc_jul_packages: "{{ ioc_jul_packages_list | join('|') }}"
+      # Aug-Oct 2026
+      - storageexplorer-bin
+      - xsnow
+      - xsnow-bin
+      - hyprland-fixes
+      - gentor
+      - x11-qemu-validation
+      - fsearch-bin
+      - glanced
+      - plasma6-applet-quicklaunch
+      - yyay
+    ioc_named_packages: "{{ ioc_named_packages_list | join('|') }}"
 
     # Jul-Aug wave commit metadata: author spoofed as the GitHub Actions bot,
-    # subject "Add missing deps" (org-cli, b505e8cd..., 2026-07-30 15:36:23 UTC).
-    ioc_commit_markers: 'github-actions\[bot\]|Add missing deps'
+    # subject "Add missing deps" (org-cli, b505e8cd..., 2026-07-30 15:36:23 UTC);
+    # "Mohd Lee" authored the storageexplorer-bin 'optimizer' commit (031bed62).
+    ioc_commit_markers: 'github-actions\[bot\]|Add missing deps|Mohd Lee'
+
+    # Literal strings that only show up in these campaigns' PKGBUILD/.install
+    # files and payloads. Regex-safe as written (dots match any char, harmless).
+    ioc_strings_list:
+      - hellscripter                     # codeberg/gitflic account hosting linux.sh
+      - gitflic.ru
+      - systemd-fontrenderd              # CHAOS RAT service names
+      - systemd-fontcached
+      - systemd-fontd
+      - s5n2uyo6gb6dhirsm5pihwohi6e7ayrwojx4xjow4cqabmbowpezenid   # CHAOS C2 onion
+      - iusearch-hyprlandbtw             # hyprland-fixes upstream
+      - 100.70.123.108                   # hyprland-fixes Tailscale peer
+    ioc_strings: "{{ ioc_strings_list | join('|') }}"
 
     # June wave sudo password grabber (campaigns.json ioc_files).
     ioc_sudo_grabber_sha256: "fd4852334ce1c2d7c9bf0e1c91dbf274a1247989b4827d4f7758cbf3bf42ebfe"
+
+    # Every published payload hash, for the sweeps in §15 and §17.
+    ioc_sha256_list:
+      - { sha256: "fd4852334ce1c2d7c9bf0e1c91dbf274a1247989b4827d4f7758cbf3bf42ebfe", label: "June sudo password grabber" }
+      - { sha256: "5bf2071c83872fc9b3fb3f664f4d3a376c811fc01e1656afc62632b2fac4f646", label: "storageexplorer-bin optimizer ELF" }
+      - { sha256: "65f0a95b24e30305146346cbc2452cfabadab9e1ca35053e1134b67c38919577", label: "hellscripter linux.sh worm" }
+      - { sha256: "2c9dbc14809f1e1aebda114194368b002acf74c8760b88fc101f625d179793c2", label: "hellscripter systemd-fontd CHAOS RAT" }
+    ioc_sha256_table: "{% for h in ioc_sha256_list %}{{ h.sha256 }} {{ h.label }}\n{% endfor %}"
 
     # Community IOC index. The repo restructured into a Python package: the old
     # main/packages.txt and main/aur_check-v2.sh are both 404 now.
@@ -150,6 +218,10 @@
     # (6444 supervisor, 10258) and a port-only allowlist false-positives on them.
     expected_listener_ports: "22|53|5355|6443|6444|8080|2379|2380|9099|10010|10248|10249|10250|10256|10257|10258|10259"
     expected_listener_procs: "k3s-server|k3s-agent|k3s|containerd|containerd-shim|kubelet|etcd|coredns|sshd|systemd-resolve|systemd-resolved|chronyd|dbus-daemon"
+    # §18: interactive accounts (UID 1000-59999) expected on these nodes.
+    expected_login_users: "daniel"
+    # §18: k3s/containerd image layers are full of unowned SUID binaries.
+    suid_prune_paths: "/var/lib/rancher /var/lib/kubelet /var/lib/containerd /run/k3s /run/containerd"
 
   tasks:
 
@@ -172,12 +244,14 @@
             Host      : {{ inventory_hostname }}
             Run Time  : {{ ansible_date_time.iso8601 }}
             Campaigns : Jun 2026 "Atomic Arch" waves 1-3 (Sonatype-2026-003775)
-                        Jul-Aug 2026 account takeover / committed ELF (ONGOING)
+                        Jul-Aug 2026 account takeover / committed ELF
+                        Aug-Oct 2026 scriptlet backdoors, hellscripter worm (ONGOING)
             Windows   : {% for w in ioc_windows %}{{ w.id }} {{ w.start }}..{{ w.end }}{% if not loop.last %} | {% endif %}{% endfor %}
 
-            IOC Ref   : https://github.com/lenucksi/aur-malware-check
-            Note      : Jul-Aug wave detection is shape-based (committed ELF,
-                        maintainer change). No payload hashes published yet.
+            IOC Ref   : https://github.com/lenucksi/aur-malware-check (June only)
+                        https://safedep.io/dirtyblanket-express-impersonation-npm/
+            Note      : Jul-Oct detection is mostly shape-based (committed ELF,
+                        scriptlet backdoor, typosquat). Hashes only for §17.
           ================================================================================
       tags: [always]
 
@@ -290,8 +364,8 @@
 
         if not covers_open:
             print("[WARN] No campaign in the community index covers the currently-open")
-            print("       window (starts %s). The Jul-Aug 2026 takeover wave is NOT" % open_start)
-            print("       represented in this data — §15/§16 are the only coverage for it.")
+            print("       window (starts %s). Nothing after June 2026 is represented" % open_start)
+            print("       in this data — §15-§19 are the only coverage for Jul-Oct.")
             print("")
 
         hits, checked = [], 0
@@ -337,10 +411,11 @@
           echo " [3] PKGBUILD CACHE — WAVE 1 IOC STRING SCAN"
           echo "========================================"
           echo "[!] Patterns: malicious npm/bun package names, attacker account names,"
-          echo "[!]           and AUR packages named for the Jul-Aug takeover wave."
+          echo "[!]           AUR packages named on aur-general since July, and"
+          echo "[!]           hellscripter/CHAOS/hyprland-fixes payload strings."
           echo "[!] Scope: PKGBUILD, *.install, .SRCINFO files only (not source trees)"
           echo ""
-          IOC_PATTERN='{{ ioc_packages }}|{{ ioc_accounts }}|{{ ioc_jul_packages }}'
+          IOC_PATTERN='{{ ioc_packages }}|{{ ioc_accounts }}|{{ ioc_named_packages }}|{{ ioc_strings }}'
           FOUND=0
           for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
             [ -d "$CACHE_DIR" ] || continue
@@ -419,12 +494,16 @@
           echo "========================================"
           echo " [5] PKGBUILD CACHE — SUSPICIOUS HOOKS AND JS RUNTIME INVOCATIONS"
           echo "========================================"
-          echo "[!] Flagging: npm install/ci, bun add/install/x, yarn add, pnpm add"
+          echo "[!] Flagging: npm install/ci, bun add/install/x, yarn add, pnpm add,"
+          echo "[!]           curl/wget piped into a shell or node (hellscripter loader:"
+          echo "[!]           bash <(curl ...linux.sh)), web.archive.org fetches, and"
+          echo "[!]           sudo inside PKGBUILD/.install (gentor/hyprland-fixes"
+          echo "[!]           escaped fakeroot that way)."
           echo "[!] Scope: PKGBUILD, *.install, .SRCINFO files only"
           echo "[!] Jul-Aug wave note: plex-media-player was hit via npm install in an"
           echo "[!] orphaned package, so this check still applies to that wave."
           echo ""
-          HOOK_PATTERN='npm (install|ci)|bun (add|install|x)|yarn add|pnpm add|npx |bunx '
+          HOOK_PATTERN='npm (install|ci)|bun (add|install|x)|yarn add|pnpm add|npx |bunx |(curl|wget)[^|]*\|[[:space:]]*(sudo +)?(ba|z|da)?sh|(curl|wget)[^|]*\|[[:space:]]*node|<\((curl|wget)|web\.archive\.org/web/|(^|[[:space:];&|(])sudo '
           FOUND=0
           for CACHE_DIR in /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru; do
             [ -d "$CACHE_DIR" ] || continue
@@ -434,7 +513,7 @@
               -print0 2>/dev/null \
               | xargs -0 grep -lInE "${HOOK_PATTERN}" 2>/dev/null)
             if [ -n "$RESULT" ]; then
-              echo "[!! JS RUNTIME INVOCATION FOUND !!]"
+              echo "[!! JS RUNTIME / REMOTE-SCRIPT / SUDO INVOCATION FOUND !!]"
               echo "$RESULT" | while read -r f; do
                 echo "  File: $f"
                 grep -nE "${HOOK_PATTERN}" "$f"
@@ -914,7 +993,10 @@
                   MAGIC=$(head -c4 "$F" 2>/dev/null | od -An -tx1 | tr -d ' \n')
                   BASE=$(basename "$REL")
                   if [ "$MAGIC" = "7f454c46" ]; then
+                    SUM=$(sha256sum "$F" 2>/dev/null | awk '{print $1}')
+                    KNOWN=$(printf '%s' "{{ ioc_sha256_table }}" | awk -v s="$SUM" '$1 == s { $1 = ""; print substr($0, 2) }')
                     echo "  [!! COMMITTED ELF IN AUR GIT TREE !!] ${PKG}: ${REL} ($(stat -c%s "$F" 2>/dev/null) bytes)"
+                    echo "      sha256 ${SUM}${KNOWN:+  == KNOWN: $KNOWN}"
                     git -C "$PKG_DIR" log -1 \
                       --format='      commit %H%n      author %an <%ae>%n      date   %aI%n      subject %s' \
                       -- "$REL" 2>/dev/null
@@ -977,7 +1059,7 @@
             INSTALLED_PKGS="$(pacman -Qqm 2>/dev/null)" \
             RPC_URL="{{ aur_rpc_url }}" \
             BAD_ACCOUNTS="{{ ioc_accounts_list | join(',') }}" \
-            NAMED_JUL="{{ ioc_jul_packages_list | join(',') }}" \
+            NAMED_JUL="{{ ioc_named_packages_list | join(',') }}" \
             WINDOWS="{% for w in ioc_windows %}{{ w.id }},{{ w.start }},{{ w.end }};{% endfor %}" \
             python3 - <<'PYEOF'
         import json, os, sys, urllib.parse, urllib.request
@@ -1040,7 +1122,7 @@
                 flags.append("ORPHANED — adoption target for the Jul-Aug wave")
                 review = 1
             if look in named or entry.get("PackageBase") in named:
-                flags.append("named on aur-general for the Jul-Aug wave")
+                flags.append("named on aur-general as malicious (Jul-Oct 2026)")
                 fail = 1
             for wid, start, end in windows:
                 if when != "unknown" and start <= when <= end:
@@ -1074,6 +1156,312 @@
       changed_when: true
       tags: [audit]
 
+    # ── §17 hellscripter worm / CHAOS RAT — Sep-Oct 2026 ─────────────────────
+    # linux.sh installs a Go CHAOS RAT build disguised as a systemd font service
+    # and makes it immutable. Paths/names are fixed and hashes are published, so
+    # this is the one Aug-Oct check that is IOC-exact rather than shape-based.
+    - name: "[17] hellscripter worm / CHAOS RAT artifacts (Sep-Oct 2026)"
+      shell: |
+        {
+          echo ""
+          echo "========================================"
+          echo " [17] HELLSCRIPTER WORM / CHAOS RAT (SEP-OCT 2026)"
+          echo "========================================"
+          echo "[!] Root : /usr/lib/systemd/systemd-fontrenderd + systemd-fontrenderd.service"
+          echo "[!] User : ~/.config/systemd/systemd-fontcached, ~/.config/systemd/systemd-fontrenderd/"
+          echo "[!] C2   : CHAOS RAT over Tor (bundled Tor Expert Bundle, socks5 127.0.0.1:9050)"
+          echo ""
+          FOUND=0
+          echo "--- systemd-font* files, units and dirs ---"
+          HITS=$(find /usr/lib/systemd /etc/systemd /root/.config/systemd /home/*/.config/systemd \
+            -maxdepth 3 -name 'systemd-font*' 2>/dev/null | sort)
+          if [ -n "$HITS" ]; then
+            echo "[!! FOUND — CHAOS RAT persistence, treat as compromised !!]"
+            echo "$HITS" | while read -r f; do echo "  $(ls -ld "$f" 2>/dev/null)"; done
+            FOUND=1
+          else
+            echo "[not found]"
+          fi
+          echo ""
+          echo "--- running processes ---"
+          # Match comm (process name), not args: the command line of this task
+          # contains the string, so `pgrep -f` always matches itself.
+          PROCS=$(ps -eo pid=,comm=,args= 2>/dev/null | awk '$2 ~ /^systemd-font/' || true)
+          if [ -n "$PROCS" ]; then
+            echo "[!! FOUND — CHAOS RAT process running !!]"
+            echo "$PROCS"
+            FOUND=1
+          else
+            echo "[not running]"
+          fi
+          echo ""
+          echo "--- immutable (chattr +i) files under systemd dirs ---"
+          echo "[!] Nothing pacman installs is immutable; the worm sets +i so its units"
+          echo "[!] survive 'rm'. Clear with chattr -i from a trusted shell before removal."
+          IMMUT=$(lsattr -R /etc/systemd /usr/lib/systemd 2>/dev/null | awk '$1 ~ /i/ {print $2}')
+          if [ -n "$IMMUT" ]; then
+            echo "[!! FOUND — immutable systemd files !!]"
+            echo "$IMMUT"
+            FOUND=1
+          else
+            echo "[none]"
+          fi
+          echo ""
+          echo "--- worm log (/tmp/log on SSH-reached hosts) ---"
+          if [ -f /tmp/log ] && grep -qE 'hellscripter|linux\.sh|systemd-font' /tmp/log 2>/dev/null; then
+            echo "[!! FOUND — /tmp/log references the worm, this host was reached over SSH !!]"
+            head -20 /tmp/log
+            FOUND=1
+          else
+            echo "[not found]"
+          fi
+          echo ""
+          echo "--- known payload hash sweep (user systemd dirs, /tmp, /var/tmp, ~/.local/bin) ---"
+          HASHHIT=$(find /root/.config/systemd /home/*/.config/systemd /tmp /var/tmp \
+              /root/.local/bin /home/*/.local/bin -xdev -type f -size -20M 2>/dev/null \
+            | xargs -r sha256sum 2>/dev/null \
+            | awk 'NR == FNR { lbl = $0; sub(/^[^ ]+ /, "", lbl); bad[$1] = lbl; next }
+                   ($1 in bad) { print "  " $2 "  == " bad[$1] }' \
+              <(printf '%s' "{{ ioc_sha256_table }}") - )
+          if [ -n "$HASHHIT" ]; then
+            echo "[!! FOUND — exact payload hash match !!]"
+            echo "$HASHHIT"
+            FOUND=1
+          else
+            echo "[no matches]"
+          fi
+          echo ""
+          echo "--- blast radius if this node WERE infected (informational) ---"
+          echo "[!] The worm reuses every private key here against every host in"
+          echo "[!] known_hosts, and pushes its loader to any AUR package a key can push."
+          for UHOME in /root /home/*; do
+            for K in "$UHOME"/.ssh/id_*; do
+              [ -f "$K" ] || continue
+              case "$K" in *.pub) continue ;; esac
+              echo "  [info] private key: $K"
+            done
+            KH="$UHOME/.ssh/known_hosts"
+            [ -f "$KH" ] && echo "  [info] $KH: $(grep -c . "$KH") host entries"
+            grep -qs 'aur.archlinux.org' "$UHOME/.ssh/config" "$KH" \
+              && echo "  [info] $UHOME has AUR push config/known_hosts — worm could push to your AUR packages"
+            [ -f "$UHOME/.npmrc" ] && grep -qs '_authToken' "$UHOME/.npmrc" \
+              && echo "  [info] $UHOME/.npmrc holds an npm publish token"
+          done
+          echo ""
+          if [ $FOUND -eq 0 ]; then
+            echo "[SUMMARY: PASS — no hellscripter / CHAOS RAT artifacts]"
+          else
+            echo "[SUMMARY: FAIL — hellscripter / CHAOS RAT artifacts present]"
+          fi
+          echo ""
+        } >> {{ report_path }}
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+      changed_when: true
+      tags: [audit]
+
+    # ── §18 Install-scriptlet backdoor shape — Aug-Sep 2026 ──────────────────
+    # x11-qemu-validation and hyprland-fixes didn't drop a named binary — they
+    # reconfigured the box: extra sudo users, attacker ssh keys, extra sshd
+    # listeners, Tailscale, SUID-root helpers, log wipes. So check the state those
+    # leave behind, independent of which package did it.
+    - name: "[18] Install-scriptlet backdoor state (users, keys, sshd, SUID, overlay VPN)"
+      shell: |
+        {
+          echo ""
+          echo "========================================"
+          echo " [18] INSTALL-SCRIPTLET BACKDOOR STATE"
+          echo "========================================"
+          FOUND=0
+          REVIEW=0
+          echo "--- UID 0 accounts other than root ---"
+          UID0=$(awk -F: '$3 == 0 && $1 != "root" {print $1}' /etc/passwd)
+          if [ -n "$UID0" ]; then
+            echo "[!! FOUND — extra UID 0 account(s): $UID0 !!]"; FOUND=1
+          else
+            echo "[none]"
+          fi
+          echo ""
+          echo "--- interactive accounts (expected: {{ expected_login_users }}) ---"
+          awk -F: '$3 >= 1000 && $3 < 60000 {print $1, $3, $6, $7}' /etc/passwd | while read -r U ID H SH; do
+            if echo " {{ expected_login_users }} " | grep -q " $U "; then
+              echo "  [ ok ]   $U uid=$ID shell=$SH"
+            else
+              echo "  [review] $U uid=$ID home=$H shell=$SH — not an expected account"
+            fi
+          done
+          UNEXP=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd \
+            | grep -vxE "$(echo '{{ expected_login_users }}' | tr ' ' '|')" || true)
+          [ -n "$UNEXP" ] && REVIEW=1
+          echo "  wheel members: $(getent group wheel | cut -d: -f4)"
+          echo ""
+          echo "--- sudoers: NOPASSWD rules and drop-ins modified after {{ critical_date }} ---"
+          grep -hE '^[^#].*NOPASSWD' /etc/sudoers /etc/sudoers.d/* 2>/dev/null | sed 's/^/  /' || true
+          NEWSUDO=$(find /etc/sudoers /etc/sudoers.d -newermt "{{ critical_date }}" -type f 2>/dev/null)
+          if [ -n "$NEWSUDO" ]; then
+            echo "[review] modified after {{ critical_date }}:"; echo "$NEWSUDO"; REVIEW=1
+          fi
+          echo ""
+          echo "--- authorized_keys ---"
+          for UHOME in /root /home/*; do
+            AK="$UHOME/.ssh/authorized_keys"
+            [ -f "$AK" ] || continue
+            echo "  $AK ($(grep -cvE '^(#|$)' "$AK") keys, mtime $(date -r "$AK" +%Y-%m-%d))"
+            grep -vE '^(#|$)' "$AK" | awk '{print "      " $1 " ..." substr($2, length($2)-11) " " $3}'
+            if find "$AK" -newermt "{{ critical_date }}" | grep -q .; then
+              echo "  [review] $AK modified after {{ critical_date }} — confirm every key above is yours"
+              REVIEW=1
+            fi
+          done
+          echo ""
+          echo "--- sshd listeners off port 22 (hyprland-fixes: 3333/4444) ---"
+          SSHD=$(ss -tlnpH 2>/dev/null | grep '"sshd' | awk '{print $4}' | grep -vE ':22$' || true)
+          if echo "$SSHD" | grep -qE ':(3333|4444)$'; then
+            echo "[!! FOUND — sshd on hyprland-fixes backdoor port !!]"; echo "$SSHD"; FOUND=1
+          elif [ -n "$SSHD" ]; then
+            echo "[review] sshd listening on: $SSHD"; REVIEW=1
+          else
+            echo "[none]"
+          fi
+          echo ""
+          echo "--- overlay VPN (Tailscale) ---"
+          TS=""
+          for T in tailscale tailscaled; do command -v "$T" >/dev/null 2>&1 && TS="$TS $T"; done
+          systemctl is-enabled tailscaled >/dev/null 2>&1 && TS="$TS tailscaled.service(enabled)"
+          ip -4 -o addr 2>/dev/null | grep -qE ' 100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.' && TS="$TS CGNAT-100.64/10-address"
+          if [ -n "$TS" ]; then
+            echo "[review] Tailscale present:$TS — not expected on a k3s node"; REVIEW=1
+          else
+            echo "[none]"
+          fi
+          if { iptables-save 2>/dev/null; nft list ruleset 2>/dev/null; } | grep -q '100\.70\.123\.108'; then
+            echo "[!! FOUND — firewall rule for the hyprland-fixes Tailscale peer 100.70.123.108 !!]"; FOUND=1
+          fi
+          echo ""
+          echo "--- SUID-root files not owned by any package ---"
+          PRUNE=()
+          for P in {{ suid_prune_paths }}; do PRUNE+=( -path "$P" -prune -o ); done
+          SUIDS=$(find / -xdev "${PRUNE[@]}" -type f -perm -4000 -print 2>/dev/null)
+          UNOWNED=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            pacman -Qqo "$f" >/dev/null 2>&1 || UNOWNED="${UNOWNED}  ${f} ($(stat -c '%U %y' "$f" | cut -d. -f1))"$'\n'
+          done <<< "$SUIDS"
+          echo "[info] $(printf '%s' "$SUIDS" | grep -c .) SUID file(s) checked against the pacman database."
+          if [ -n "$UNOWNED" ]; then
+            echo "[!! FOUND — unowned SUID binaries, treat as compromised !!]"; printf '%s' "$UNOWNED"; FOUND=1
+          else
+            echo "[none — every SUID binary belongs to a package]"
+          fi
+          echo ""
+          echo "--- unowned files in /etc/pacman.d (hyprland-fixes hid configs here) ---"
+          PD=""
+          for f in /etc/pacman.d/*; do
+            [ -f "$f" ] || continue
+            case "$f" in *.pacnew|*.pacsave|*.bak) continue ;; esac
+            pacman -Qqo "$f" >/dev/null 2>&1 || PD="$PD $f"
+          done
+          if [ -n "$PD" ]; then
+            echo "[review] not owned by a package:$PD"; REVIEW=1
+          else
+            echo "[none]"
+          fi
+          echo ""
+          echo "--- log / history tampering (hyprland-fixes vacuums the journal) ---"
+          echo "  [info] journal starts: $(journalctl -q --no-pager -o short-iso 2>/dev/null | head -1 | cut -d' ' -f1)"
+          for UHOME in /root /home/*; do
+            BH="$UHOME/.bash_history"
+            [ -L "$BH" ] && { echo "[review] $BH is a symlink -> $(readlink "$BH")"; REVIEW=1; }
+          done
+          echo ""
+          if [ $FOUND -gt 0 ]; then
+            echo "[SUMMARY: FAIL — backdoor state present, see [!! lines above]"
+          elif [ $REVIEW -gt 0 ]; then
+            echo "[SUMMARY: REVIEW — see [review] lines above]"
+          else
+            echo "[SUMMARY: PASS — no scriptlet-backdoor state found]"
+          fi
+          echo ""
+        } >> {{ report_path }}
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+      changed_when: true
+      tags: [audit]
+
+    # ── §19 AUR helper typosquats + build-time root exposure — Oct 2026 ──────
+    # marchos1as uploaded yay/paru look-alikes (yyay, ...) that reuse the real
+    # upstream tarball, so they install a working helper AND run linux.sh as
+    # root. Edit distance 1 from a helper name catches the shape without a list.
+    - name: "[19] AUR helper typosquats and build-time root exposure"
+      shell: |
+        {
+          echo ""
+          echo "========================================"
+          echo " [19] AUR HELPER TYPOSQUATS + BUILD-TIME ROOT EXPOSURE"
+          echo "========================================"
+          CACHED=$(ls -1 /root/.cache/yay /root/.cache/paru /home/*/.cache/yay /home/*/.cache/paru 2>/dev/null | grep -v ':$')
+          PKGS="$(pacman -Qq 2>/dev/null) $CACHED" python3 - <<'PYEOF'
+        import os
+
+        helpers = ["yay", "paru", "pikaur", "trizen", "aura", "pacaur"]
+        suffixes = ("-bin", "-git", "-debug")
+
+        def dist(a, b):
+            prev = list(range(len(b) + 1))
+            for i, ca in enumerate(a, 1):
+                cur = [i]
+                for j, cb in enumerate(b, 1):
+                    cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+                prev = cur
+            return prev[-1]
+
+        def base(n):
+            for s in suffixes:
+                if n.endswith(s):
+                    return base(n[: -len(s)])
+            return n
+
+        # Self-check: a broken matcher must not print a PASS.
+        assert dist("yyay", "yay") == 1 and dist("parru", "paru") == 1 and dist("yay", "yay") == 0
+        assert base("yay-bin-debug") == "yay"
+
+        names = sorted({n for n in os.environ["PKGS"].split() if n})
+        hits = []
+        for n in names:
+            b = base(n)
+            if b in helpers:
+                continue
+            for h in helpers:
+                if dist(b, h) == 1:
+                    hits.append((n, h))
+        if hits:
+            for n, h in hits:
+                print("[!! FOUND — '%s' is one edit away from AUR helper '%s' (typosquat shape) !!]" % (n, h))
+            print("[SUMMARY: FAIL — possible AUR helper typosquat installed or cached]")
+        else:
+            print("[clean — no installed or cached package name is one edit from an AUR helper]")
+            print("[SUMMARY: PASS — no AUR helper typosquats]")
+        PYEOF
+          echo ""
+          echo "--- build-time root exposure (informational) ---"
+          echo "[!] gentor/hyprland-fixes called sudo from build()/package(). makepkg runs"
+          echo "[!] those as the building user, so any NOPASSWD rule that user holds is"
+          echo "[!] root for every AUR package it builds."
+          grep -hE '^[^#].*NOPASSWD' /etc/sudoers /etc/sudoers.d/* 2>/dev/null | while read -r L; do
+            echo "  [exposure] $L"
+            echo "$L" | grep -q '/usr/bin/pacman' \
+              && echo "             pacman -U of a crafted package = arbitrary root, no prompt."
+          done
+          echo ""
+        } >> {{ report_path }}
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+      changed_when: true
+      tags: [audit]
+
     # ── Overall verdict ───────────────────────────────────────────────────────
     - name: Write overall verdict
       shell: |
@@ -1083,7 +1471,7 @@
           echo " OVERALL VERDICT"
           echo "========================================"
           REPORT="{{ report_path }}"
-          if grep -qE '\[!! (MATCH FOUND|MATCH|FOUND|CYRILLIC TEXT DETECTED|JS RUNTIME INVOCATION|SUSPICIOUS INJECTION|COMMITTED ELF IN AUR GIT TREE|SPOOFED / ATTACKER COMMIT METADATA|SUDO GRABBER|TOR CONNECTION|TOR SOFTWARE PRESENT)' "$REPORT" 2>/dev/null \
+          if grep -qE '\[!! (MATCH FOUND|MATCH|FOUND|CYRILLIC TEXT DETECTED|JS RUNTIME|SUSPICIOUS INJECTION|COMMITTED ELF IN AUR GIT TREE|SPOOFED / ATTACKER COMMIT METADATA|SUDO GRABBER|TOR CONNECTION|TOR SOFTWARE PRESENT)' "$REPORT" 2>/dev/null \
              || grep -qE '^\[!!\]' "$REPORT" 2>/dev/null; then
             echo "  !! COMPROMISED / REVIEW REQUIRED !!"
             echo "  One or more high-confidence IOCs were detected. See flagged sections above."
@@ -1095,12 +1483,17 @@
             echo "    5. For Wave 3 spam only: edit the flagged shell config file to remove injected lines."
             echo "    6. For a committed ELF (§15): the AUR account is the breach, not just"
             echo "       this node. Report it to aur-general and check every host that built it."
+            echo "    7. For hellscripter/CHAOS (§17): chattr -i the units before removing them,"
+            echo "       and treat every host reachable with this node's SSH keys as exposed —"
+            echo "       the worm spreads over SSH and pushes into any AUR package it can."
+            echo "    8. For scriptlet backdoors (§18): remove extra users/keys/sshd units and"
+            echo "       unowned SUID files only after imaging — or just reinstall."
           elif grep -qE '\[SUMMARY: (REVIEW|FAIL)' "$REPORT" 2>/dev/null; then
             echo "  REVIEW — Low-confidence flags present, manual verification recommended."
             echo "  No high-confidence IOCs detected, but some findings warrant inspection."
           else
             echo "  CLEAN — No IOCs detected on this node."
-            echo "  All checks passed for both the June 2026 and Jul-Aug 2026 campaigns."
+            echo "  All checks passed for the June, Jul-Aug and Aug-Oct 2026 campaigns."
           fi
           echo ""
           echo "  Authoritative second opinion (community tool, now a Python package —"
@@ -1108,7 +1501,7 @@
           echo "    git clone https://github.com/lenucksi/aur-malware-check"
           echo "    python -m aur_check --scan-all-homes"
           echo "    # or: integration/aur-malware-check.sh"
-          echo "  Its data does NOT yet cover the Jul-Aug 2026 wave — see §2, §15, §16."
+          echo "  Its data does NOT cover anything after June 2026 — see §2, §15-§19."
           echo "========================================"
           echo ""
         } >> {{ report_path }}
