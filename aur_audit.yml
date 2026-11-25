@@ -57,7 +57,11 @@
 #     https://safedep.io/dirtyblanket-express-impersonation-npm/
 #     https://osv.dev/vulnerability/MAL-2026-17242
 #
-# NOTE ON COVERAGE: as of 2026-10-20 the community IOC repo (lenucksi) still has
+# Nov 2026 review (aur-general through msg03169, 2026-11-24): no new campaign or
+# payload hashes published. Registration is still closed. Leftovers only:
+#   msg03089 kyralemarec/screenpipe-bin   msg03120 heroic-games-launcher-bun
+#
+# NOTE ON COVERAGE: as of 2026-11-25 the community IOC repo (lenucksi) still has
 # no campaign data after June 2026. §2 reports that gap explicitly rather than
 # implying coverage. §15/§16/§18 are shape-based; §17 and ioc_sha256_list carry
 # the only published payload hashes (hellscripter, storageexplorer 'optimizer').
@@ -122,6 +126,7 @@
       - lourencopaiva          # Jul-Aug wave: storageexplorer-bin 'optimizer'
       - pingwin840             # Sep 2026: orphan takeovers, Russian rc-file spam
       - marchos1as             # Oct 2026: yay/paru typosquats, hellscripter loader
+      - kyralemarec            # Jun 2026 leftover: adopted libxdiff/php-xdiff/screenpipe-bin in 10s; banned, still listed as maintainer (aur-general 2026-10-29)
     ioc_accounts: "{{ ioc_accounts_list | join('|') }}"
 
     ioc_packages_list:
@@ -177,6 +182,12 @@
       - glanced
       - plasma6-applet-quicklaunch
       - yyay
+      # Nov 2026 review
+      - libxdiff               # adopted by kyralemarec 2026-06-11, not yet verified clean
+      - php-xdiff              # same
+      - screenpipe-bin         # reset to clean upstream commit, maintainer still banned account
+      - screenpipe
+      - heroic-games-launcher-bun   # first-time submitter, reported fake 2026-11-06
     ioc_named_packages: "{{ ioc_named_packages_list | join('|') }}"
 
     # Jul-Aug wave commit metadata: author spoofed as the GitHub Actions bot,
